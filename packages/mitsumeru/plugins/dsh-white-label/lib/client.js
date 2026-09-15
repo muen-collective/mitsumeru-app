@@ -748,8 +748,10 @@ window.__ModuleLoader__.load({
 
     function SidebarMark() {
       // Prefer uploaded icon > filesystem icon.
+      // The sidebar mark always shows when an icon is uploaded — the showIcon
+      // toggle is for the hero mark only, not the sidebar.
       const uploaded = useSyncExternalStoreSafe(subscribeBrand, getBrandSnapshot)
-      if (uploaded.showIcon && uploaded.icon) {
+      if (uploaded.icon) {
         if (uploaded.icon.includes("image/svg+xml")) {
           return React.createElement(InlineSvg, { src: uploaded.icon, style: { height: "24px", width: "auto" } })
         }
@@ -954,7 +956,7 @@ window.__ModuleLoader__.load({
         ctx.slots.inject("settings.section", () =>
           ctx.slots.register({
             name: "settings.section",
-            id: "white-label-brand",
+            id: "white-label-brand-upload",
             order: 15,
             label: () => translate("upload.title"),
           }, BrandUploadPage)
