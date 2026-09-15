@@ -1,0 +1,3 @@
+- insert:
+    - id: white-label
+      name: '@muen/dsh-white-label'

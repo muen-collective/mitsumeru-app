@@ -26,7 +26,7 @@ const PROFILE = 'mitsu'
  * Plugins this app ships and composes into its profile. One literal list, so the
  * profile manifest and the bundle a build actually contains cannot drift apart.
  */
-const SHIPPED_PLUGINS = ['@muen/dsh-brand-mitsumeru', '@muen/dsh-eva-theme']
+const SHIPPED_PLUGINS = ['@muen/dsh-brand-mitsumeru', '@muen/dsh-eva-theme', '@muen/dsh-white-label']
 
 /**
  * Packages this app used to compose and no longer does. Removing one from

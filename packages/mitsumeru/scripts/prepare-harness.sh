@@ -117,10 +117,9 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # bundle — being present on disk is not enough — or the whale keeps the seat.
 # See that file for the measurement.
 #
-# TWO packages. The appearance plugin was dropped on 2026-09-12 while its
-# design is reconsidered (see SHIPPED_PLUGINS in src/main/harness.ts for why).
-# Its source stays in plugins/ and is simply not vendored, which also keeps it
-# out of a signed build.
+# THREE packages. dsh-white-label is the appearance plugin (accent + brand),
+# published from muen-plugins and vendored here so ensureProfile can symlink
+# it into the profile on first boot.
 #
 # dsh-eva-theme is here for the same reason the brand plugin is: its
 # cordis.patch.yml inserts the loader row, and being present on disk is not the
@@ -128,7 +127,7 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # seed module words — see the COMPATIBILITY note at the top of its
 # lib/client.tpl.js for the measured list and the one import that broke in
 # DSH Desktop 2.0.4.
-for pkg in dsh-brand-mitsumeru dsh-eva-theme; do
+for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label; do
   src="plugins/$pkg"
   [ -d "$src" ] || { echo "[FAIL] shipped plugin missing: $src"; exit 1; }
   dest="$OUT/node_modules/@muen/$pkg"
