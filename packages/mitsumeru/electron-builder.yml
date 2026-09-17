@@ -97,35 +97,23 @@ mac:
   # accept it.
   target:
     - target: dmg
-      arch: [arm64]
+      arch: [arm64, x64]
     - target: zip
-      arch: [arm64]
+      arch: [arm64, x64]
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
 
 # The installer is deliberately plain (changed 2026-09-11, user).
-#
-# From 2026-09-10 this window carried a background image with the logo and
-# tagline on it. Removed on request: the installer's job is to get the app into
-# Applications, and the artwork made it read as a second title card. It also
-# collided with the white-label work (epics 88/89) — our lockup on the installer
-# is exactly the mark a client replaces once their own brand is installed.
-#
-# `backgroundColor`, NOT a bare `background` removal. Measured in dmg-builder
-# 26.15.3: with `background` absent or null, `computeBackground()` falls back to
-# the vendor's own template (`dmg-builder/templates/background.tiff`, 540x380,
-# 37298 bytes) — an image nobody asked for, which is exactly what a delete-only
-# change produced here. Setting `backgroundColor` short-circuits that fallback at
-# the call site (`dmg.js:111-117`) and lands in `customizeDmg`'s plain-window
-# branch (`dmgUtil.js:35`), which also keeps honouring the width/height below.
-# Verified by mounting the rebuilt image: no `.background.*` on the volume.
-#
-# build/dmg-background.png is kept in the tree as the source for that artwork —
-# a future lockup is designed from it rather than re-derived. It is named
-# nowhere, so nothing loads it.
-#
-# What remains is declared, not assumed: the window size, the volume icon and
-# the icon arrangement. `verify-release.sh` mounts the built dmg and asserts the
-# app inside is signed, stapled and ours, and that no upstream string appears in
-# the volume name.
 dmg:
   title: ${productName} ${version}
   backgroundColor: '#ffffff'
