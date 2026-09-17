@@ -61,17 +61,35 @@ if (dshDir === undefined) {
 const dsh = JSON.parse(readFileSync(join(store, dshDir, "node_modules/@deepseek-ai/dsh/package.json"), "utf8"))
 
 const overrides = {}
+// Pin the release itself absolutely.
+overrides["@deepseek-ai/dsh"] = version
+
+// Walk the store: every @deepseek-ai/* package that was resolved when pnpm
+// installed dsh gets pinned to the EXACT version the store resolved. This
+// catches transitive deps (e.g. dsh-web-app -> dsh-web-frontend) whose ^ ranges
+// would otherwise drift to a newer prerelease during the staged install.
+const pnpmDir = join(store, "..")
+const pnpmStoreDirs = readdirSync(pnpmDir)
+for (const dir of pnpmStoreDirs) {
+  const m = dir.match(/^@deepseek-ai\+(.+)@(.+?)_/)
+  if (!m) continue
+  const [, pkgName, storeVersion] = m
+  const pkgFullName = `@deepseek-ai/${pkgName}`
+  // Only pin packages that this DSH release actually declares (direct or
+  // transitive). If a @deepseek-ai/* package in the store is from an older
+  // closure that this release no longer uses, including it would be harmless
+  // but noisy — skip it.
+  if (overrides[pkgFullName] !== undefined) continue
+  overrides[pkgFullName] = storeVersion
+}
+
+// Also pin from dsh direct declarations: these are authoritative even when
+// the store directory name is mangled (scoped packages).
 for (const [name, range] of Object.entries(dsh.dependencies ?? {})) {
   if (!name.startsWith("@deepseek-ai/")) continue
-  // Pin to the version that release DECLARES for this package, not to the release
-  // version: the closure also carries differently-versioned packages
-  // (`@deepseek-ai/cordis@^4.0.2`, `cordis-plugin-hmr@^1.0.17`, `schemastery@^3.18.2`),
-  // and pinning those to 0.1.5-rc.2 asks the registry for a version that has
-  // never existed (measured 2026-09-11 — the whole stage install failed).
+  if (overrides[name] !== undefined) continue
   overrides[name] = range.replace(/^[~^]/u, "")
 }
-// The release pins itself absolutely: nothing declares @deepseek-ai/dsh but us.
-overrides["@deepseek-ai/dsh"] = version
 
 writeFileSync(outFile, JSON.stringify({
   name: "mitsumeru-harness-resource",

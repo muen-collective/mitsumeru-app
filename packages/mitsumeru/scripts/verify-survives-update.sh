@@ -21,7 +21,9 @@
 #
 # Requires:
 #   - A prepared harness tree (`pnpm harness`) at build/harness
-#   - The white-label plugin in muen-plugins/plugins/dsh-white-label/
+#   - The white-label plugin source at plugins/dsh-white-label/ — it moved into
+#     this repo when T7 vendored it into the app; the old ~/muen-plugins path
+#     made this gate exit 1 before it booted anything (fixed 2026-09-15)
 #   - Electron installed at ./node_modules/.bin/electron
 set -euo pipefail
 cd "$(dirname "$0")/.." # packages/mitsumeru
@@ -31,7 +33,7 @@ ENTRY=build/harness/node_modules/@deepseek-ai/dsh/lib/bin.js
 HARNESS=build/harness
 PROBE=scripts/white-label-probe.cjs
 WL_PLUGIN=dsh-white-label
-MENUP_PLUGINS_DIR="$HOME/muen-plugins/plugins/$WL_PLUGIN"
+MENUP_PLUGINS_DIR="$(pwd)/plugins/$WL_PLUGIN"
 [ -d "$MENUP_PLUGINS_DIR" ] || {
   echo "[FAIL] $MENUP_PLUGINS_DIR not found"
   exit 1

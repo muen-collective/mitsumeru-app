@@ -1,17 +1,19 @@
 // @muen/dsh-white-label — host half.
 //
 // WHAT THIS IS: the filesystem owner. The brand folder (<DSH_HOME>/brand/)
-// contains icon.svg and/or logo (PNG or SVG). This host half reads those files,
-// validates them, and exposes the result through a cordis service that the
-// client half consumes — no shell bridge, no mitsumeru:* preload needed.
+// contains an icon (SVG preferred, PNG/WebP accepted) and/or a logo (any
+// accepted format). This host half reads those files, validates them, and
+// exposes the result through a cordis service that the client half consumes —
+// no shell bridge, no mitsumeru:* preload needed.
 //
 // WHY THE HOST OWNS THE FILES: a published plugin runs in a stock DSH with no
 // shell bridge. The harness process has real filesystem access; the browser
 // does not. So the host reads, the client renders.
 //
-// VALIDATION RULES (epic 88 R3, carried verbatim):
-//   R1. Extension: .png or .svg only
-//   R2. PNG magic: first 8 bytes must be 89 50 4e 47 0d 0a 1a 0a
+// VALIDATION RULES (epic 88 R3; R1/R2 extended 2026-09-15 to admit raster
+// icons — a brand folder is allowed to hold what a design tool exports):
+//   R1. Extension: .svg, .png or .webp only
+//   R2. Raster magic: PNG begins 89 50 4e 47 0d 0a 1a 0a; WebP is RIFF…WEBP
 //   R3. SVG safety: no <script>, no on* attributes, no <style> block
 //   R4. Size: ≤ 2 MB per file
 //   R5. Something themes: at least one fill, stroke, stop-color, or color
@@ -36,14 +38,26 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import z from '@deepseek-ai/schemastery'
 
 const name = 'white-label'
 const inject = []
 
 const BRAND_DIR = 'brand'
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2 MB
-const ALLOWED_EXTENSIONS = new Set(['.png', '.svg'])
+const ALLOWED_EXTENSIONS = new Set(['.svg', '.png', '.webp'])
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+// A raster icon is a first-class mark, not a logo: a brand that ships a PNG or
+// a WebP has no vector to hand, and requiring the file be named exactly
+// `icon.svg` silently dropped that mark into the LOGO seat — the icon seat
+// stayed empty and the fallback mark kept it (measured 2026-09-15).
+//
+// WebP is a RIFF container: "RIFF" <u32 size> "WEBP".
+//
+// When one seat has several candidates the winner is decided by EXT_RANK, never
+// by readdir order: an SVG can follow the theme (see the README), so it beats a
+// raster; PNG beats WebP because it is the format a design tool exports.
+const EXT_RANK = { '.svg': 0, '.png': 1, '.webp': 2 }
 
 // ── validation ─────────────────────────────────────────────────────────────
 
@@ -53,6 +67,11 @@ function validatePngMagic(buf) {
     if (buf[i] !== PNG_MAGIC[i]) return false
   }
   return true
+}
+
+function validateWebpMagic(buf) {
+  if (buf.length < 12) return false
+  return buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP'
 }
 
 function validateSvgSafety(text) {
@@ -96,12 +115,17 @@ function validateBrandFile(filename, content) {
     return { ok: false, error: `${filename}: file too large (${(content.length / 1024 / 1024).toFixed(1)} MB, max 2 MB)` }
   }
 
-  if (ext === '.png') {
-    // R2: PNG magic bytes
-    if (!validatePngMagic(content)) {
+  if (ext === '.png' || ext === '.webp') {
+    // R2: the bytes must be what the extension claims, so a renamed file is
+    // refused rather than served as a broken data URL.
+    const isPng = ext === '.png'
+    if (isPng && !validatePngMagic(content)) {
       return { ok: false, error: `${filename}: not a valid PNG file (bad magic bytes)` }
     }
-    const mimeType = 'image/png'
+    if (!isPng && !validateWebpMagic(content)) {
+      return { ok: false, error: `${filename}: not a valid WebP file (bad RIFF/WEBP header)` }
+    }
+    const mimeType = isPng ? 'image/png' : 'image/webp'
     const dataUrl = `data:${mimeType};base64,${content.toString('base64')}`
     return { ok: true, dataUrl, mimeType }
   }
@@ -137,6 +161,25 @@ function brandFolder(profileHome) {
 }
 
 /**
+ * Which seat a brand file occupies. The seats are separate render surfaces: the
+ * icon is the mark (sidebar rail at 24 px, hero at 34 px, left of the blank-
+ * session headline); the logo is the wordmark lockup in the sidebar name strip.
+ *
+ * A basename carrying `icon` as a whole word takes the icon seat — `icon.png`,
+ * `icon-dark.webp`, `mitsu-icon.png`. That is what a real brand folder contains;
+ * requiring the literal name `icon.svg` sent `mitsu-icon.png` to the LOGO seat
+ * and left the mark seat to the fallback (measured 2026-09-15). Everything else
+ * is a logo.
+ *
+ * @param {string} filename - the file's basename
+ * @returns {'icon' | 'logo'}
+ */
+function seatFor(filename) {
+  const base = filename.slice(0, filename.length - extname(filename).length).toLowerCase()
+  return base.split(/[-_.]/).includes('icon') ? 'icon' : 'logo'
+}
+
+/**
  * Read and validate all brand files from the brand folder.
  * Returns the validated set, or an empty set if the folder doesn't exist.
  *
@@ -155,6 +198,10 @@ async function readBrand(profileHome) {
     return result
   }
 
+  // Best accepted candidate per seat, compared by EXT_RANK (top of this file).
+  // Starting at Infinity means "this seat is still empty".
+  const seatRank = { icon: Number.POSITIVE_INFINITY, logo: Number.POSITIVE_INFINITY }
+
   for (const filename of files) {
     const ext = extname(filename).toLowerCase()
     if (!ALLOWED_EXTENSIONS.has(ext)) continue
@@ -171,13 +218,14 @@ async function readBrand(profileHome) {
         continue
       }
 
-      // Classify: icon.svg → icon, anything else → logo
-      const isIcon = filename === 'icon.svg'
-      const slot = isIcon ? 'icon' : 'logo'
-      if (result[slot] === null) {
-        result[slot] = { dataUrl: validation.dataUrl, mimeType: validation.mimeType }
-      }
-      // If multiple files match the same slot, first one wins (folder scan order)
+      // Classify by NAME, not by exact filename: `icon.*` takes the icon seat,
+      // anything else is a logo. `mitsu-icon.png` is a mark; `logo-dark.png` is
+      // not. Within one seat an SVG beats a raster (it can follow the theme) and
+      // PNG beats WebP, so the winner never depends on readdir order.
+      const slot = seatFor(filename)
+      if (EXT_RANK[ext] >= seatRank[slot]) continue
+      seatRank[slot] = EXT_RANK[ext]
+      result[slot] = { dataUrl: validation.dataUrl, mimeType: validation.mimeType }
     } catch {
       // File unreadable — skip silently
     }
@@ -185,6 +233,44 @@ async function readBrand(profileHome) {
 
   return result
 }
+
+// ── durable uploads: the brand settings namespace ──────────────────────────
+// The client half persists an uploaded brand through the settings scope, and
+// that scope only resolves a namespace the HOST registers. Anything else
+// reports `status: 'unavailable'` with an undefined `value` — see
+// @deepseek-ai/dsh-client-ui-settings settings-contract.d.ts, "Settings
+// namespace registered by the owning Host plugin". Without this registration
+// the scope reads empty, `persistBrand` degrades to the browser-only
+// localStorage mirror, and the upload is gone at the next launch: the harness
+// serves a fresh random port each time and localStorage is origin-scoped.
+// Same shape as @deepseek-ai/dsh-agent-default-model's own namespace.
+// Measured 2026-09-16.
+const BRAND_SETTINGS_NAMESPACE = 'white-label-brand'
+// The brand document. Each seat owns its own mark and its own switch: the
+// sidebar rail (24 px) and the hero seat (34 px) are separate surfaces, so one
+// upload no longer feeds both. `icon` / `showIcon` are the pre-split single-mark
+// fields — kept in the schema so an existing upload still resolves (the client
+// half falls back to them) and so a document rewrite does not drop them.
+const BRAND_SETTINGS_BASE = {
+  logoLight: '',
+  logoDark: '',
+  sidebarIcon: '',
+  heroIcon: '',
+  showSidebarIcon: true,
+  showHeroIcon: true,
+  icon: '',
+  showIcon: true,
+}
+const BRAND_SETTINGS_SCHEMA = z.object({
+  logoLight: z.string().default(''),
+  logoDark: z.string().default(''),
+  sidebarIcon: z.string().default(''),
+  heroIcon: z.string().default(''),
+  showSidebarIcon: z.boolean().default(true),
+  showHeroIcon: z.boolean().default(true),
+  icon: z.string().default(''),
+  showIcon: z.boolean().default(true),
+})
 
 // ── cordis apply ───────────────────────────────────────────────────────────
 
@@ -208,6 +294,25 @@ function apply(ctx) {
   } catch {
     // provide is best-effort — if the service name is taken, keep going.
     // The client falls back to showing the path as selectable text.
+  }
+
+  // Register the brand namespace so the client's settings scope can read an
+  // uploaded brand (and write a new one) durably. Optional by construction: a
+  // composition with no settings provider keeps working exactly as composed.
+  try {
+    ctx.inject(['settings'], (settingsCtx) => {
+      try {
+        settingsCtx.settings.register(
+          BRAND_SETTINGS_NAMESPACE,
+          BRAND_SETTINGS_SCHEMA,
+          { base: BRAND_SETTINGS_BASE },
+        )
+      } catch {
+        // Provider present but the namespace is taken or rejected — keep going.
+      }
+    })
+  } catch {
+    // No settings service in this composition.
   }
 }
 

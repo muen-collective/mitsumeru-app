@@ -8,8 +8,10 @@
 //   2. Brand-from-filesystem — the host half reads files from <DSH_HOME>/brand/
 //      and exposes them through a cordis service. Shown in the brand row.
 //   3. Brand upload — a Settings → Brand section where the user uploads logo
-//      light/dark and an optional icon. Stored via the settings scope (durable
-//      across restarts) with an localStorage mirror.
+//      light/dark, plus an icon and a visibility switch for EACH seat. The
+//      sidebar and the hero are separate surfaces, so they are configured
+//      separately. Stored via the settings scope (durable across restarts) with
+//      an localStorage mirror.
 //
 // Sidebar marks prefer uploaded values over filesystem values.
 ;(function () {
@@ -184,46 +186,102 @@ const accentReport = () => {
 // ── brand upload persistence ───────────────────────────────────────────────
 
 let BRAND_SCOPE = null
-let brandValue = { logoLight: "", logoDark: "", icon: "", showIcon: false }
+// The sidebar and the hero are separate surfaces — a 24 px rail mark and a
+// 34 px seat beside the blank-session headline — so each owns its own upload and
+// its own visibility switch. `icon` / `showIcon` are the PRE-SPLIT single-mark
+// fields: one upload fed both seats and `showIcon` gated the hero only (the
+// sidebar always rendered when a mark existed). They survive here purely as a
+// read fallback for an existing upload; the first save on the Brand page
+// materializes all four seat fields and clears them (see BrandUploadPage.save),
+// so "Remove" on one seat can never be shadowed by the old shared mark.
+const BRAND_SEAT_FIELDS = ["sidebarIcon", "heroIcon", "showSidebarIcon", "showHeroIcon"]
+let brandValue = {
+  logoLight: "", logoDark: "",
+  sidebarIcon: "", heroIcon: "",
+  showSidebarIcon: true, showHeroIcon: true,
+}
 let brandRev = 0
 const brandListeners = new Set()
-const BRAND_FIELDS = ["logoLight", "logoDark", "icon", "showIcon"]
+const BRAND_FIELDS = ["logoLight", "logoDark", ...BRAND_SEAT_FIELDS]
 
 function isImageDataUrl(v) {
   return typeof v === "string" && v.startsWith("data:image/") && v.length <= MAX_STORED
 }
 
+// A boolean that may arrive as JSON true/false or as the settings doc's string
+// form. null means "this source has nothing to say".
+function readBool(src, key) {
+  if (!src || typeof src !== "object") return null
+  if (typeof src[key] === "boolean") return src[key]
+  if (src[key] === "true" || src[key] === "false") return src[key] === "true"
+  return null
+}
+
 function readBrandPersisted() {
-  const out = { logoLight: "", logoDark: "", icon: "", showIcon: false }
-  // Read settings scope
+  const out = {
+    logoLight: "", logoDark: "",
+    sidebarIcon: "", heroIcon: "",
+    showSidebarIcon: true, showHeroIcon: true,
+  }
+  let legacyIcon = ""
+  let legacyShowIcon = null
+  // The localStorage mirror stores only what this page wrote, so a seat key
+  // being present there — even as "" — is an explicit choice. The Host scope
+  // cannot be read that way: schema defaults materialize empty strings into the
+  // resolved value, so presence there proves nothing (see case 4 of the seat
+  // check: a legacy-only brand resolves with sidebarIcon: "" in the scope).
+  let mirrorSeatsExplicit = false
+  const absorb = (src) => {
+    if (!src || typeof src !== "object") return
+    for (const k of ["logoLight", "logoDark", "sidebarIcon", "heroIcon"]) {
+      if (isImageDataUrl(src[k])) out[k] = src[k]
+    }
+    const sidebar = readBool(src, "showSidebarIcon")
+    if (sidebar !== null) out.showSidebarIcon = sidebar
+    const hero = readBool(src, "showHeroIcon")
+    if (hero !== null) out.showHeroIcon = hero
+    if (isImageDataUrl(src.icon)) legacyIcon = src.icon
+    const legacy = readBool(src, "showIcon")
+    if (legacy !== null) legacyShowIcon = legacy
+  }
+  // Read settings scope (the durable Host document)…
   try {
     const snap = BRAND_SCOPE && typeof BRAND_SCOPE.getSnapshot === "function"
       ? BRAND_SCOPE.getSnapshot() : undefined
     const scopeVal = (snap && typeof snap === "object" && snap.value && typeof snap.value === "object")
       ? snap.value : snap
-    if (scopeVal && typeof scopeVal === "object") {
-      for (const k of ["logoLight", "logoDark", "icon"]) {
-        if (isImageDataUrl(scopeVal[k])) out[k] = scopeVal[k]
-      }
-      if (typeof scopeVal.showIcon === "boolean") out.showIcon = scopeVal.showIcon
-      else if (scopeVal.showIcon === "true" || scopeVal.showIcon === "false") out.showIcon = scopeVal.showIcon === "true"
-    }
+    absorb(scopeVal)
   } catch {}
-  // Read localStorage mirror
+  // …then the localStorage mirror (survives a partial Host scope).
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(BRAND_LS_KEY) : null
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === "object") {
         const pick = (a, b) => { if (!a) return b; if (!b) return a; return b.length > a.length ? b : a }
-        for (const k of ["logoLight", "logoDark", "icon"]) {
+        if (typeof parsed.sidebarIcon === "string" || typeof parsed.heroIcon === "string") mirrorSeatsExplicit = true
+        for (const k of ["logoLight", "logoDark", "sidebarIcon", "heroIcon"]) {
           out[k] = pick(out[k], isImageDataUrl(parsed[k]) ? parsed[k] : "")
         }
-        if (typeof parsed.showIcon === "boolean") out.showIcon = parsed.showIcon
-        else if (parsed.showIcon === "true" || parsed.showIcon === "false") out.showIcon = parsed.showIcon === "true"
+        const sidebar = readBool(parsed, "showSidebarIcon")
+        if (sidebar !== null) out.showSidebarIcon = sidebar
+        const hero = readBool(parsed, "showHeroIcon")
+        if (hero !== null) out.showHeroIcon = hero
+        if (isImageDataUrl(parsed.icon)) legacyIcon = pick(legacyIcon, parsed.icon)
+        const legacy = readBool(parsed, "showIcon")
+        if (legacy !== null) legacyShowIcon = legacy
       }
     }
   } catch {}
+  // Pre-split fallback: the single mark held both seats. Skipped once the mirror
+  // carries seat keys, so a "Remove" survives even when the Host write degraded
+  // to localStorage-only and the scope still holds the legacy mark.
+  if (!mirrorSeatsExplicit) {
+    if (!out.sidebarIcon && legacyIcon) out.sidebarIcon = legacyIcon
+    if (!out.heroIcon && legacyIcon) out.heroIcon = legacyIcon
+  }
+  // `showIcon: false` meant "no hero mark"; the sidebar had no switch at all.
+  if (legacyShowIcon === false) out.showHeroIcon = false
   return out
 }
 
@@ -265,10 +323,22 @@ function subscribeBrand(fn) {
 
 function getBrandSnapshot() { return brandValue }
 
+// The module factory below binds React (and react/jsx-runtime). This helper and
+// the module-scope brand store sit ABOVE that factory, so a factory-local
+// `var React` left the identifier unbound for them: every slot entry that reads
+// the brand store crashed with `ReferenceError: React is not defined` —
+// sidebar.brand.mark, sidebar.brand.name, conversation.hero.brand.mark and
+// settings.section — which is why the sidebar/hero mark and the Brand upload
+// page never rendered while the two Settings rows (react/jsx-runtime only) did.
+// Measured 2026-09-16.
+let React = null
+
 function useSyncExternalStoreSafe(sub, get) {
-  return React.useSyncExternalStore
-    ? React.useSyncExternalStore(sub, get, get)
-    : (React.useState(get)[0])
+  const R = React
+  if (R === null) return get()
+  return R.useSyncExternalStore
+    ? R.useSyncExternalStore(sub, get, get)
+    : (R.useState(get)[0])
 }
 
 // ── brand CSS ──────────────────────────────────────────────────────────────
@@ -330,11 +400,11 @@ const DICT = {
     "mode.light": "Light",
     "mode.dark": "Dark",
     "brand.title": "Brand",
-    "brand.hint": "Place your icon.svg and logo files in the brand folder. The plugin reads them on launch.",
+    "brand.hint": "Place your icon (SVG, PNG or WebP) and logo files in the brand folder. The plugin reads them on launch.",
     "brand.path": "<DSH_HOME>/brand/",
     "brand.reveal": "Reveal folder",
     "upload.title": "Brand",
-    "upload.intro": "Upload logos for light and dark themes, plus an optional icon for the sidebar and hero.",
+    "upload.intro": "Upload logos for light and dark themes. The sidebar mark and the hero mark are separate seats \u2014 each one has its own icon and its own switch.",
     "upload.lightLabel": "Logo \u2014 light theme",
     "upload.darkLabel": "Logo \u2014 dark theme",
     "upload.choose": "Choose image\u2026",
@@ -342,9 +412,12 @@ const DICT = {
     "upload.remove": "Remove",
     "upload.preview": "Preview",
     "upload.sizeHint": "Transparent PNG or SVG, \u2264 1 MB. Lockups: artwork \u2265 48 px tall (2\u00d7 of the 24 px render). Square marks: \u2265 96 px.",
-    "upload.iconLabel": "Icon \u2014 sidebar + hero",
-    "upload.iconHint": "Square icon shown in the sidebar (24 px) and above the composer when starting a new session (34 px).",
-    "upload.showIcon": "Show icon in sidebar and hero",
+    "upload.sidebarIconLabel": "Sidebar icon",
+    "upload.sidebarIconHint": "Square mark at the top of the sidebar rail, rendered at 24 px. Leave it empty to fall back to the brand folder\u2019s icon.",
+    "upload.showSidebarIcon": "Show icon in sidebar",
+    "upload.heroIconLabel": "Hero icon",
+    "upload.heroIconHint": "Square mark beside the headline on a blank session, rendered at 34 px. Leave it empty to fall back to the brand folder\u2019s icon.",
+    "upload.showHeroIcon": "Show icon in hero",
     "upload.saved": "Saved \u2014 your brand is live now.",
     "upload.saveBtn": "Save brand",
     "upload.revertBtn": "Revert",
@@ -366,11 +439,11 @@ const DICT = {
     "mode.light": "\u6d45\u8272",
     "mode.dark": "\u6df1\u8272",
     "brand.title": "\u54c1\u724c",
-    "brand.hint": "\u5c06 icon.svg \u548c logo \u6587\u4ef6\u653e\u5165\u54c1\u724c\u6587\u4ef6\u5939\uff0c\u63d2\u4ef6\u4f1a\u5728\u542f\u52a8\u65f6\u8bfb\u53d6\u3002",
+    "brand.hint": "\u5c06\u56fe\u6807\uff08SVG/PNG/WebP\uff09\u548c logo \u6587\u4ef6\u653e\u5165\u54c1\u724c\u6587\u4ef6\u5939\uff0c\u63d2\u4ef6\u4f1a\u5728\u542f\u52a8\u65f6\u8bfb\u53d6\u3002",
     "brand.path": "<DSH_HOME>/brand/",
     "brand.reveal": "\u6253\u5f00\u6587\u4ef6\u5939",
     "upload.title": "\u54c1\u724c",
-    "upload.intro": "\u4e0a\u4f20\u6d45\u8272/\u6df1\u8272\u4e3b\u9898\u7684\u6807\u5fd7\uff0c\u4ee5\u53ca\u53ef\u9009\u7684\u8fb9\u680f\u56fe\u6807\u3002",
+    "upload.intro": "\u4e0a\u4f20\u6d45\u8272/\u6df1\u8272\u4e3b\u9898\u7684\u6807\u5fd7\u3002\u8fb9\u680f\u56fe\u6807\u4e0e\u4e3b\u6807\u5fd7\u56fe\u6807\u662f\u4e24\u4e2a\u72ec\u7acb\u7684\u4f4d\u5e2d\uff0c\u5404\u81ea\u62e5\u6709\u56fe\u7247\u548c\u5f00\u5173\u3002",
     "upload.lightLabel": "\u6807\u5fd7 \u2014 \u6d45\u8272\u4e3b\u9898",
     "upload.darkLabel": "\u6807\u5fd7 \u2014 \u6df1\u8272\u4e3b\u9898",
     "upload.choose": "\u9009\u62e9\u56fe\u7247\u2026",
@@ -378,9 +451,12 @@ const DICT = {
     "upload.remove": "\u79fb\u9664",
     "upload.preview": "\u9884\u89c8",
     "upload.sizeHint": "\u900f\u660e PNG \u6216 SVG\uff0c\u2264 1 MB\u3002\u6a2a\u5411\u7ec4\u5408\u6807\u5fd7\uff1a\u56fe\u6848\u9ad8\u5ea6 \u2265 48px\uff0c\u65b9\u5f62\u6807\u5fd7 \u2265 96px\u3002",
-    "upload.iconLabel": "\u56fe\u6807 \u2014 \u8fb9\u680f + \u4e3b\u6807\u5fd7",
-    "upload.iconHint": "\u65b9\u5f62\u56fe\u6807\u663e\u793a\u5728\u8fb9\u680f\uff0824px\uff09\u548c\u8f93\u5165\u6846\u4e0a\u65b9\uff0834px\uff09\u3002",
-    "upload.showIcon": "\u663e\u793a\u56fe\u6807",
+    "upload.sidebarIconLabel": "\u8fb9\u680f\u56fe\u6807",
+    "upload.sidebarIconHint": "\u663e\u793a\u5728\u8fb9\u680f\u9876\u90e8\u7684\u65b9\u5f62\u56fe\u6807\uff0c\u6e32\u67d3\u4e3a 24px\u3002\u7559\u7a7a\u5219\u56de\u9000\u5230\u54c1\u724c\u6587\u4ef6\u5939\u4e2d\u7684\u56fe\u6807\u3002",
+    "upload.showSidebarIcon": "\u5728\u8fb9\u680f\u663e\u793a\u56fe\u6807",
+    "upload.heroIconLabel": "\u4e3b\u6807\u5fd7\u56fe\u6807",
+    "upload.heroIconHint": "\u663e\u793a\u5728\u65b0\u4f1a\u8bdd\u6807\u9898\u65c1\u7684\u65b9\u5f62\u56fe\u6807\uff0c\u6e32\u67d3\u4e3a 34px\u3002\u7559\u7a7a\u5219\u56de\u9000\u5230\u54c1\u724c\u6587\u4ef6\u5939\u4e2d\u7684\u56fe\u6807\u3002",
+    "upload.showHeroIcon": "\u5728\u4e3b\u6807\u5fd7\u533a\u663e\u793a\u56fe\u6807",
     "upload.saved": "\u5df2\u4fdd\u5b58\u2014\u2014\u54c1\u724c\u5df2\u751f\u6548\u3002",
     "upload.saveBtn": "\u4fdd\u5b58\u54c1\u724c",
     "upload.revertBtn": "\u8fd8\u539f",
@@ -415,7 +491,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" })
 
-    var React = require("react")
+    React = require("react") // module-scope binding declared above the factory
     var react_jsx_runtime = require("react/jsx-runtime")
     var store = require("@deepseek-ai/dsh-client-store")
 
@@ -657,11 +733,11 @@ window.__ModuleLoader__.load({
       const previewClass = "wl-brand-preview" + (field === "logoLight" ? " wl-brand-preview--light" : "")
       return react_jsx_runtime.jsxs("div", { className: "wl-logo-cell", children: [
         react_jsx_runtime.jsx("div", { className: "wl-logo-cell-label", children: label }),
-        react_jsx_runtime.jsx("div", { className: previewClass },
+        react_jsx_runtime.jsx("div", { className: previewClass, children:
           value
             ? react_jsx_runtime.jsx("img", { src: value, alt: "", draggable: false })
-            : react_jsx_runtime.jsx("span", { className: "wl-brand-preview--empty" }, translate("upload.preview"))
-        ),
+            : react_jsx_runtime.jsx("span", { className: "wl-brand-preview--empty", children: translate("upload.preview") })
+        }),
         react_jsx_runtime.jsxs("div", { className: "wl-logo-cell-actions", children: [
           react_jsx_runtime.jsx("label", { className: "wl-brand-btn", style: { display: "inline-block" }, children: [
             btnLabel,
@@ -676,7 +752,7 @@ window.__ModuleLoader__.load({
             children: translate("upload.remove")
           })
         ] }),
-        error && react_jsx_runtime.jsx("div", { className: "wl-brand-msg wl-brand-msg--warn" }, error)
+        error && react_jsx_runtime.jsx("div", { className: "wl-brand-msg wl-brand-msg--warn", children: error })
       ] })
     }
 
@@ -690,7 +766,19 @@ window.__ModuleLoader__.load({
       const save = async () => {
         setSaving(true)
         const dirtyKeys = BRAND_FIELDS.filter((key) => draft[key] !== committed[key])
-        const results = await Promise.all(dirtyKeys.map((key) => persistBrand(key, draft[key])))
+        const keys = new Set(dirtyKeys)
+        // The first save that touches a seat materializes BOTH seats from the
+        // resolved draft and clears the pre-split single-mark fields. Without
+        // that, `icon` would keep shadowing an explicit "Remove" (""), because
+        // the read fallback fills an empty seat from the legacy mark.
+        const touchesSeats = dirtyKeys.some((key) => BRAND_SEAT_FIELDS.includes(key))
+        if (touchesSeats) for (const key of BRAND_SEAT_FIELDS) keys.add(key)
+        const pending = [...keys].map((key) => persistBrand(key, draft[key]))
+        if (touchesSeats) {
+          pending.push(persistBrand("icon", ""))
+          pending.push(persistBrand("showIcon", true))
+        }
+        const results = await Promise.all(pending)
         setSaving(false)
         const hostOk = results.every(Boolean)
         setNotice({ kind: hostOk ? "ok" : "warn", text: translate(hostOk ? "upload.saved" : "upload.localOnly") })
@@ -701,25 +789,37 @@ window.__ModuleLoader__.load({
           style: { color: "var(--dsw-alias-label-secondary)", fontSize: 13, lineHeight: 1.6, margin: 0 },
           children: translate("upload.intro")
         }),
-        react_jsx_runtime.jsx("h3", null, translate("upload.title")),
+        react_jsx_runtime.jsx("h3", { children: translate("upload.title") }),
         react_jsx_runtime.jsx("div", { className: "wl-brand-card", children:
           react_jsx_runtime.jsx("div", { className: "wl-logo-row", children: [
             react_jsx_runtime.jsx(LogoCell, { field: "logoLight", label: translate("upload.lightLabel"), value: draft.logoLight, onChange: setField }),
             react_jsx_runtime.jsx(LogoCell, { field: "logoDark", label: translate("upload.darkLabel"), value: draft.logoDark, onChange: setField })
           ] })
         }),
-        react_jsx_runtime.jsx("p", { className: "wl-brand-hint" }, translate("upload.sizeHint")),
+        react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.sizeHint") }),
         react_jsx_runtime.jsx("div", { className: "wl-brand-card", children: [
           react_jsx_runtime.jsx("label", { className: "wl-switch", children: [
             react_jsx_runtime.jsx("input", {
-              type: "checkbox", checked: Boolean(draft.showIcon),
-              onChange: (e) => setField("showIcon", e.target.checked)
+              type: "checkbox", checked: Boolean(draft.showSidebarIcon),
+              onChange: (e) => setField("showSidebarIcon", e.target.checked)
             }),
             react_jsx_runtime.jsx("span", { className: "wl-switch-track", "aria-hidden": true }),
-            react_jsx_runtime.jsx("span", null, translate("upload.showIcon"))
+            react_jsx_runtime.jsx("span", { children: translate("upload.showSidebarIcon") })
           ] }),
-          react_jsx_runtime.jsx(LogoCell, { field: "icon", label: translate("upload.iconLabel"), value: draft.icon, onChange: setField }),
-          react_jsx_runtime.jsx("p", { className: "wl-brand-hint" }, translate("upload.iconHint"))
+          react_jsx_runtime.jsx(LogoCell, { field: "sidebarIcon", label: translate("upload.sidebarIconLabel"), value: draft.sidebarIcon, onChange: setField }),
+          react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.sidebarIconHint") })
+        ] }),
+        react_jsx_runtime.jsx("div", { className: "wl-brand-card", children: [
+          react_jsx_runtime.jsx("label", { className: "wl-switch", children: [
+            react_jsx_runtime.jsx("input", {
+              type: "checkbox", checked: Boolean(draft.showHeroIcon),
+              onChange: (e) => setField("showHeroIcon", e.target.checked)
+            }),
+            react_jsx_runtime.jsx("span", { className: "wl-switch-track", "aria-hidden": true }),
+            react_jsx_runtime.jsx("span", { children: translate("upload.showHeroIcon") })
+          ] }),
+          react_jsx_runtime.jsx(LogoCell, { field: "heroIcon", label: translate("upload.heroIconLabel"), value: draft.heroIcon, onChange: setField }),
+          react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.heroIconHint") })
         ] }),
         react_jsx_runtime.jsx("div", { className: "wl-brand-actions", children: [
           react_jsx_runtime.jsx("button", {
@@ -731,7 +831,7 @@ window.__ModuleLoader__.load({
             children: translate("upload.revertBtn")
           })
         ] }),
-        dirty && !saving && react_jsx_runtime.jsx("p", { className: "wl-brand-hint", style: { margin: 0 } }, translate("upload.dirtyHint")),
+        dirty && !saving && react_jsx_runtime.jsx("p", { className: "wl-brand-hint", style: { margin: 0 }, children: translate("upload.dirtyHint") }),
         notice && react_jsx_runtime.jsx("div", {
           className: notice.kind === "warn" ? "wl-brand-msg wl-brand-msg--warn" : "wl-brand-msg wl-brand-msg--ok",
           children: notice.text
@@ -743,42 +843,57 @@ window.__ModuleLoader__.load({
 
     // Module-level ref: filesystem brand data (loaded by host service).
     const fsBrand = { icon: null, logo: null }
-    // Upload brand data (from settings scope).
-    const uploadedBrand = { logoLight: "", logoDark: "", icon: "", showIcon: false }
 
+    // The marks read the filesystem brand too, and the host read resolves AFTER
+    // the first render. Reading the mutable object directly rendered the mark
+    // once with nothing and never told it the icon had arrived — the icon seat
+    // stayed empty until some unrelated re-render happened to redraw it. So the
+    // filesystem brand gets its own subscription, mirroring the uploaded one.
+    let fsBrandSnapshot = { icon: null, logo: null }
+    const fsBrandListeners = new Set()
+    function subscribeFsBrand(listener) {
+      fsBrandListeners.add(listener)
+      return () => { fsBrandListeners.delete(listener) }
+    }
+    function getFsBrandSnapshot() { return fsBrandSnapshot }
+    function publishFsBrand() {
+      fsBrandSnapshot = { icon: fsBrand.icon, logo: fsBrand.logo }
+      for (const listener of [...fsBrandListeners]) listener()
+    }
+    // Upload brand data (from settings scope). Each seat has its own mark and
+    // its own switch.
+    const uploadedBrand = {
+      logoLight: "", logoDark: "",
+      sidebarIcon: "", heroIcon: "",
+      showSidebarIcon: true, showHeroIcon: true,
+    }
+
+    // The sidebar mark: its own uploaded icon, its own visibility switch.
     function SidebarMark() {
-      // Prefer uploaded icon > filesystem icon.
-      // The sidebar mark always shows when an icon is uploaded — the showIcon
-      // toggle is for the hero mark only, not the sidebar.
+      // Uploaded mark > filesystem icon.
       const uploaded = useSyncExternalStoreSafe(subscribeBrand, getBrandSnapshot)
-      if (uploaded.icon) {
-        if (uploaded.icon.includes("image/svg+xml")) {
-          return React.createElement(InlineSvg, { src: uploaded.icon, style: { height: "24px", width: "auto" } })
-        }
-        return React.createElement("img", {
-          src: uploaded.icon, alt: "", draggable: false,
-          style: { height: "24px", width: "auto", objectFit: "contain" },
-          "data-ls-skip": ""
-        })
+      const fs = useSyncExternalStoreSafe(subscribeFsBrand, getFsBrandSnapshot)
+      if (uploaded.showSidebarIcon === false) return null
+      const own = uploaded.sidebarIcon
+      const src = own || (fs.icon && fs.icon.dataUrl) || ""
+      if (!src) return null
+      const isSvg = own ? own.includes("image/svg+xml") : Boolean(fs.icon && fs.icon.mimeType === "image/svg+xml")
+      if (isSvg) {
+        return React.createElement(InlineSvg, { src, style: { height: "24px", width: "auto" } })
       }
-      if (fsBrand.icon && fsBrand.icon.dataUrl) {
-        if (fsBrand.icon.mimeType === "image/svg+xml") {
-          return React.createElement(InlineSvg, { src: fsBrand.icon.dataUrl, style: { height: "24px", width: "auto" } })
-        }
-        return React.createElement("img", {
-          src: fsBrand.icon.dataUrl, alt: "", draggable: false,
-          style: { height: "24px", width: "auto", objectFit: "contain" },
-          "data-ls-skip": ""
-        })
-      }
-      return null
+      return React.createElement("img", {
+        src, alt: "", draggable: false,
+        style: { height: "24px", width: "auto", objectFit: "contain" },
+        "data-ls-skip": ""
+      })
     }
 
     function SidebarName() {
       const uploaded = useSyncExternalStoreSafe(subscribeBrand, getBrandSnapshot)
+      const fs = useSyncExternalStoreSafe(subscribeFsBrand, getFsBrandSnapshot)
       // Prefer uploaded logos > filesystem logo.
-      const light = uploaded.logoLight || (fsBrand.logo && fsBrand.logo.dataUrl) || ""
-      const dark = uploaded.logoDark || (fsBrand.logo && fsBrand.logo.dataUrl) || ""
+      const light = uploaded.logoLight || (fs.logo && fs.logo.dataUrl) || ""
+      const dark = uploaded.logoDark || (fs.logo && fs.logo.dataUrl) || ""
       if (!light && !dark) return null
       if (light && dark && light !== dark) {
         return React.createElement("span", {
@@ -800,22 +915,46 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // The hero mark: the seat immediately left of the blank-session headline
+    // ("Into the Unknown"). Separate upload and separate switch from the
+    // sidebar. A filesystem icon is the brand operator's only statement of
+    // intent, so it still holds the seat when no upload exists. Without that
+    // fallback the hero seat could never be held by a filesystem brand — it
+    // silently returned null and the previous occupant kept the seat
+    // (measured 2026-09-15).
     function HeroMark() {
       const uploaded = useSyncExternalStoreSafe(subscribeBrand, getBrandSnapshot)
-      if (!uploaded.showIcon || !uploaded.icon) return null
-      if (uploaded.icon.includes("image/svg+xml")) {
-        return React.createElement(InlineSvg, { src: uploaded.icon, style: { height: "34px", width: "34px" } })
+      const fs = useSyncExternalStoreSafe(subscribeFsBrand, getFsBrandSnapshot)
+      if (uploaded.showHeroIcon === false) return null
+      const own = uploaded.heroIcon
+      const src = own || (fs.icon && fs.icon.dataUrl) || ""
+      if (!src) return null
+      const isSvg = own ? own.includes("image/svg+xml") : Boolean(fs.icon && fs.icon.mimeType === "image/svg+xml")
+      const size = { height: "34px", width: "34px" }
+      if (isSvg) {
+        return React.createElement(InlineSvg, { src, style: size })
       }
       return React.createElement("img", {
-        src: uploaded.icon, alt: "", draggable: false,
-        style: { height: "34px", width: "34px", objectFit: "contain" },
+        src, alt: "", draggable: false,
+        style: { ...size, objectFit: "contain" },
         "data-ls-skip": ""
       })
     }
 
     // ── apply ─────────────────────────────────────────────────────────────
 
-    const inject = ["slots", "locale", "theme"]
+    // `settingsScope` is the settings transport (provided by
+    // @deepseek-ai/dsh-client-ui-settings) and is what makes an uploaded brand
+    // DURABLE. It must be DECLARED here: without it apply() can run before the
+    // service exists, `ctx.get("settingsScope")` returns undefined, and every
+    // upload silently degrades to the localStorage mirror — which a restart
+    // wipes, because the harness serves a fresh random port each launch and
+    // localStorage is origin-scoped. That is the whole "logo is gone when I
+    // restart" report. dsh-client-ui-theme declares ["slots","locale","remote",
+    // "settingsScope"] for exactly this reason; `remote` is not needed here
+    // because SettingsScopeBinder binds the providing fiber for writes.
+    // Measured 2026-09-16.
+    const inject = ["slots", "locale", "theme", "settingsScope"]
 
     function apply(ctx) {
       // Inject brand CSS
@@ -896,6 +1035,7 @@ window.__ModuleLoader__.load({
           const reveal = typeof brandService.revealFolder === "function" ? brandService.revealFolder : null
           fsBrand.icon = result.icon
           fsBrand.logo = result.logo
+          publishFsBrand()
           brandBound?.sync(result.icon, result.logo, result.folder, result.errors, reveal, ++brandRev2)
         } catch {}
       }
@@ -938,7 +1078,12 @@ window.__ModuleLoader__.load({
           name: "settings.general.item",
           id: "white-label-brand",
           order: 20,
-          locale: BRAND_NS,
+          // WL_NS, not BRAND_NS: the dictionary is registered once, under WL_NS
+          // (see `locale.register(WL_NS, DICT)` above). BRAND_NS was never
+          // registered, so this row rendered raw keys — "brand.title",
+          // "brand.hint", "brand.path" — with no preview in the running app,
+          // which reads as the plugin being absent. Measured 2026-09-16.
+          locale: WL_NS,
           store: fsBrandStore,
           inject: (actions) => {
             brandBound = actions
