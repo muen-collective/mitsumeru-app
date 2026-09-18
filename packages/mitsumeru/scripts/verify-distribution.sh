@@ -37,7 +37,15 @@ set -uo pipefail
 cd "$(dirname "$0")/.." # packages/mitsumeru
 
 SITE_URL="${SITE_URL:-https://mitsumeru.vercel.app/}"
-EXPECT_REPO="${EXPECT_REPO:-muen-collective/mitsumeru}"
+# The canonical repo name, and it changed: the app repo was renamed from
+# `mitsumeru` to `mitsumeru-app`, and `mitsumeru` now only redirects. The gate must
+# expect the canonical name for two reasons: the GitHub API answers with canonical
+# `browser_download_url`s, so the hero-fallback comparison below is an exact string
+# match against them; and the retired-repo check flags any other name, so expecting
+# the old name would flag the correct links. The app's own update feed
+# (`electron-builder.yml` -> `app-update.yml`) still says `mitsumeru` and relies on
+# the redirect — changing that is a build change, not a gate change.
+EXPECT_REPO="${EXPECT_REPO:-muen-collective/mitsumeru-app}"
 VERSION=$(node -p "require('./package.json').version")
 status=0
 ok()  { echo "[PASS] $1"; }
