@@ -228,3 +228,27 @@ if (drifted.length > 0) {
   process.exit(1)
 }
 ' "$VERSION"
+
+# ── branding layer: the hero tagline seam ───────────────────────────────────
+# `conversation.hero.tagline` is the seat @muen/dsh-white-label occupies to
+# replace the blank-session headline (Settings → Brand → Hero tagline). It cannot
+# come from a plugin: slot names live in the compiled render tree, and a parent
+# factory has to DECLARE the child before any renderer may call it (an
+# undeclared call throws SlotOwnershipError during render). So it is a narrow
+# additive patch to the vendored client bundle.
+#
+# It runs HERE, on the staged tree, for two reasons: the edit is inside the
+# signature electron-builder applies later, and a bundle without it cannot reach
+# the field at all. Patching an installed app instead — which is how this was
+# delivered on 2026-09-17 — costs the signature: `codesign --verify` then reports
+# "a sealed resource is missing or invalid" naming the file, and Gatekeeper can
+# no longer assess the app.
+#
+# --no-backup: whatever is in this tree gets packaged, so the sidecar
+# `.muen-unpatched` copy the field path writes must not ship.
+#
+# The verifier is the gate, not a courtesy: it fails on an unpatched bundle AND
+# on the A-only shape (call without declaration) that blanked every new session
+# on 2026-09-17. A failed build here is the point.
+node patches/patch-hero-brand-tagline.mjs --harness "$OUT" --no-backup
+node scripts/verify-hero-tagline.mjs --harness "$OUT"
