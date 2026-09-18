@@ -167,14 +167,45 @@ function createSplashWindow(): BrowserWindow {
   return win
 }
 
-// T5: permission requests (notifications, geolocation, media, …) → deny all.
-// The wrapped harness UI needs none of them; revisit per-feature if that
-// ever changes instead of opening the gate. Registered once app is ready —
-// session.defaultSession is unavailable before then.
-function installPermissionDenial(): void {
+// T5: permissions → deny by default, with a named allow-list.
+//
+// The ONE entry is `clipboard-sanitized-write`, and it is not a convenience:
+// Chromium asks for it before the async Clipboard API will write, and every Copy
+// button in the wrapped harness UI (code blocks, tool results, terminal output,
+// diffs) writes through `navigator.clipboard.writeText`. Denying it does not
+// merely block the write — the upstream helper in
+// `@deepseek-ai/dsh-client-ui-primitives` catches the rejection and returns
+// false, and its caller returns early on false, so the button neither wrote to
+// the clipboard nor showed its "Copied" state. The only visible behaviour was a
+// click that did nothing at all.
+//
+// Electron consults BOTH handlers — "most web APIs do a permission check and
+// then make a permission request if the check is denied" — so the same set is
+// applied on both paths. Anything not named here stays denied on both, which is
+// the posture this app shipped with; widening it is still a deliberate edit.
+//
+// `clipboard-read` is deliberately NOT allowed. Nothing in the harness UI reads
+// the clipboard through the async API (the terminal's paste path goes through
+// DOM paste events, which need no permission), and allowing it would let any
+// page in the harness origin read whatever the user last copied.
+//
+// Registered once the app is ready — session.defaultSession is unavailable
+// before then.
+const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(['clipboard-sanitized-write'])
+
+function installPermissionPolicy(): void {
+  // Checks are consulted first and are silent by design: a denied check is how
+  // Chromium reaches the request handler below, so logging every check would
+  // turn routine probing into lockdown noise (scripts/smoke.sh fails a run that
+  // logs `[lockdown] deny`).
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
+    ALLOWED_PERMISSIONS.has(permission)
+  )
+
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    log(`[lockdown] deny permission ${permission}`)
-    callback(false)
+    const allowed = ALLOWED_PERMISSIONS.has(permission)
+    log(`[lockdown] ${allowed ? 'allow' : 'deny'} permission ${permission}`)
+    callback(allowed)
   })
 }
 
@@ -468,7 +499,7 @@ app.whenReady().then(() => {
   log(
     `version ${app.getVersion()}${isDevVersion(app.getVersion()) ? ' dev-build' : ''} packaged=${String(app.isPackaged)}`
   )
-  installPermissionDenial()
+  installPermissionPolicy()
   installExternalLinkHandler()
   installMenu()
   ipcMain.handle('mitsumeru:app-info', () => appInfo())
