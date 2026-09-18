@@ -176,18 +176,25 @@ fi
 # updater's own integrity check, so this is the number that matters.
 
 if [ -f "$work/dl.dmg" ] && [ -n "${LIVE_URL:-}" ]; then
-  if curl -fsSL --max-time 30 "${LIVE_URL%/*}/dev-mac.yml" -o "$work/dev-mac.yml" 2>/dev/null; then
-    want=$(grep -A3 "$(basename "$LIVE_URL")" "$work/dev-mac.yml" | sed -n 's/^ *sha512: *//p' | head -1)
+  # The manifest's NAME comes from the channel, the same rule verify-release.sh
+  # applies: a `-dev` version is served by `dev-mac.yml`, a promoted one by
+  # `latest-mac.yml`. This was hardcoded to `dev-mac.yml`, so the check could
+  # never pass on a production release — it reported a missing manifest for a
+  # release whose manifest was published, correct, under its real name.
+  CHANNEL=$(node -p "const v = require('./package.json').version; v.includes('-') ? v.split('-')[1].split('.')[0] : 'latest'")
+  MANIFEST_NAME="$CHANNEL-mac.yml"
+  if curl -fsSL --max-time 30 "${LIVE_URL%/*}/$MANIFEST_NAME" -o "$work/$MANIFEST_NAME" 2>/dev/null; then
+    want=$(grep -A3 "$(basename "$LIVE_URL")" "$work/$MANIFEST_NAME" | sed -n 's/^ *sha512: *//p' | head -1)
     got=$(openssl dgst -sha512 -binary "$work/dl.dmg" | openssl base64 -A)
     if [ -n "$want" ] && [ "$want" = "$got" ]; then
-      ok "download: sha512 matches dev-mac.yml (the updater's own check)"
+      ok "download: sha512 matches $MANIFEST_NAME (the updater's own check)"
     elif [ -z "$want" ]; then
-      bad "download: no sha512 for $(basename "$LIVE_URL") in dev-mac.yml"
+      bad "download: no sha512 for $(basename "$LIVE_URL") in $MANIFEST_NAME"
     else
       bad "download: sha512 MISMATCH — the download does not match the update manifest"
     fi
   else
-    bad "download: could not fetch dev-mac.yml next to the release asset"
+    bad "download: could not fetch $MANIFEST_NAME next to the release asset"
   fi
 fi
 
