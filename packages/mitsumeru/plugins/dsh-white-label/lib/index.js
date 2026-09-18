@@ -6,6 +6,9 @@
 // exposes the result through a cordis service that the client half consumes —
 // no shell bridge, no mitsumeru:* preload needed.
 //
+// It also owns the durable `white-label-brand` settings namespace: the uploaded
+// logos, the two seat marks with their switches, and the hero tagline.
+//
 // WHY THE HOST OWNS THE FILES: a published plugin runs in a stock DSH with no
 // shell bridge. The harness process has real filesystem access; the browser
 // does not. So the host reads, the client renders.
@@ -246,11 +249,20 @@ async function readBrand(profileHome) {
 // Same shape as @deepseek-ai/dsh-agent-default-model's own namespace.
 // Measured 2026-09-16.
 const BRAND_SETTINGS_NAMESPACE = 'white-label-brand'
+// Hero tagline bound: a prose line that replaces the blank-session headline.
+// Not a layout cure (the hero row wraps) — a bound on what the settings document
+// holds, matching the client field's maxLength.
+const MAX_TAGLINE = 200
 // The brand document. Each seat owns its own mark and its own switch: the
 // sidebar rail (24 px) and the hero seat (34 px) are separate surfaces, so one
 // upload no longer feeds both. `icon` / `showIcon` are the pre-split single-mark
 // fields — kept in the schema so an existing upload still resolves (the client
 // half falls back to them) and so a document rewrite does not drop them.
+//
+// `brandTagline` is the one text field: it replaces the shipped blank-session
+// headline ("Into the Unknown") through the `conversation.hero.tagline` seam
+// added by patches/patch-hero-brand-tagline.mjs. Empty keeps the
+// upstream copy, so a brand that never touches it renders exactly as shipped.
 const BRAND_SETTINGS_BASE = {
   logoLight: '',
   logoDark: '',
@@ -258,6 +270,7 @@ const BRAND_SETTINGS_BASE = {
   heroIcon: '',
   showSidebarIcon: true,
   showHeroIcon: true,
+  brandTagline: '',
   icon: '',
   showIcon: true,
 }
@@ -268,6 +281,7 @@ const BRAND_SETTINGS_SCHEMA = z.object({
   heroIcon: z.string().default(''),
   showSidebarIcon: z.boolean().default(true),
   showHeroIcon: z.boolean().default(true),
+  brandTagline: z.string().max(MAX_TAGLINE).default(''),
   icon: z.string().default(''),
   showIcon: z.boolean().default(true),
 })

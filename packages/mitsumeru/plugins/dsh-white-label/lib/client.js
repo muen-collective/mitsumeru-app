@@ -12,6 +12,11 @@
 //      sidebar and the hero are separate surfaces, so they are configured
 //      separately. Stored via the settings scope (durable across restarts) with
 //      an localStorage mirror.
+//   4. Hero tagline — one text field in the same section. It is written to the
+//      durable settings namespace and rendered into the `conversation.hero.tagline`
+//      seam that patches/patch-hero-brand-tagline.mjs adds in place of
+//      the shipped headline text node. Empty keeps the upstream copy ("Into the
+//      Unknown"), and on an unpatched harness the occupant is simply inert.
 //
 // Sidebar marks prefer uploaded values over filesystem values.
 ;(function () {
@@ -195,14 +200,19 @@ let BRAND_SCOPE = null
 // materializes all four seat fields and clears them (see BrandUploadPage.save),
 // so "Remove" on one seat can never be shadowed by the old shared mark.
 const BRAND_SEAT_FIELDS = ["sidebarIcon", "heroIcon", "showSidebarIcon", "showHeroIcon"]
+// The one TEXT field in the brand document — the blank-session hero tagline.
+// It is not an image, so it is excluded from the image validation below and gets
+// its own merge rule in readBrandPersisted().
+const BRAND_TAGLINE_FIELD = "brandTagline"
 let brandValue = {
   logoLight: "", logoDark: "",
   sidebarIcon: "", heroIcon: "",
   showSidebarIcon: true, showHeroIcon: true,
+  brandTagline: "",
 }
 let brandRev = 0
 const brandListeners = new Set()
-const BRAND_FIELDS = ["logoLight", "logoDark", ...BRAND_SEAT_FIELDS]
+const BRAND_FIELDS = ["logoLight", "logoDark", BRAND_TAGLINE_FIELD, ...BRAND_SEAT_FIELDS]
 
 function isImageDataUrl(v) {
   return typeof v === "string" && v.startsWith("data:image/") && v.length <= MAX_STORED
@@ -222,6 +232,7 @@ function readBrandPersisted() {
     logoLight: "", logoDark: "",
     sidebarIcon: "", heroIcon: "",
     showSidebarIcon: true, showHeroIcon: true,
+    brandTagline: "",
   }
   let legacyIcon = ""
   let legacyShowIcon = null
@@ -231,6 +242,14 @@ function readBrandPersisted() {
   // resolved value, so presence there proves nothing (see case 4 of the seat
   // check: a legacy-only brand resolves with sidebarIcon: "" in the scope).
   let mirrorSeatsExplicit = false
+  // The tagline is TEXT, not an image, so "longer wins" is the wrong merge rule.
+  // The durable scope is authoritative whenever it declares the field, so a
+  // deliberate clear ("") in the Host document renders — a stale localStorage
+  // copy must not resurrect the old line. An absent key (an older document, or a
+  // Host half that has not restarted onto the new schema yet) falls back to the
+  // mirror. Same shape as @muen/dsh-brand-swap's tagline merge.
+  let scopeTagline = null
+  let localTagline = null
   const absorb = (src) => {
     if (!src || typeof src !== "object") return
     for (const k of ["logoLight", "logoDark", "sidebarIcon", "heroIcon"]) {
@@ -240,6 +259,7 @@ function readBrandPersisted() {
     if (sidebar !== null) out.showSidebarIcon = sidebar
     const hero = readBool(src, "showHeroIcon")
     if (hero !== null) out.showHeroIcon = hero
+    if (typeof src.brandTagline === "string") scopeTagline = src.brandTagline
     if (isImageDataUrl(src.icon)) legacyIcon = src.icon
     const legacy = readBool(src, "showIcon")
     if (legacy !== null) legacyShowIcon = legacy
@@ -267,6 +287,7 @@ function readBrandPersisted() {
         if (sidebar !== null) out.showSidebarIcon = sidebar
         const hero = readBool(parsed, "showHeroIcon")
         if (hero !== null) out.showHeroIcon = hero
+        if (typeof parsed.brandTagline === "string") localTagline = parsed.brandTagline
         if (isImageDataUrl(parsed.icon)) legacyIcon = pick(legacyIcon, parsed.icon)
         const legacy = readBool(parsed, "showIcon")
         if (legacy !== null) legacyShowIcon = legacy
@@ -282,6 +303,9 @@ function readBrandPersisted() {
   }
   // `showIcon: false` meant "no hero mark"; the sidebar had no switch at all.
   if (legacyShowIcon === false) out.showHeroIcon = false
+  // Durable scope wins when it carries the field; otherwise the mirror; and if
+  // neither has ever written one, the shipped headline stays (empty = fallback).
+  out.brandTagline = scopeTagline !== null ? scopeTagline : (localTagline || "")
   return out
 }
 
@@ -351,6 +375,11 @@ const BRAND_CSS = [
   "body[data-ds-dark-theme] .wl-logo--dark{display:inline-block}",
   // Hero icon
   ".wl-hero{width:34px;height:34px;object-fit:contain;display:inline-block;vertical-align:middle}",
+  // Hero tagline — the `conversation.hero.tagline` seam occupant. It sits in the
+  // upstream headline text node's place and inherits the shipped hero typography
+  // handed in as `headlineClassName`; these variables only let a brand tune it,
+  // so a brand that sets none renders exactly like the shipped headline.
+  ".wl-tagline{color:var(--wl-tagline-color,inherit);font-size:var(--wl-tagline-font-size,inherit);font-weight:var(--wl-tagline-font-weight,inherit);letter-spacing:var(--wl-tagline-letter-spacing,inherit);text-align:center}",
   // Settings page
   ".wl-brand-page{display:flex;flex-direction:column;gap:18px;max-width:620px}",
   ".wl-brand-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:14px;background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:10px}",
@@ -383,6 +412,9 @@ const BRAND_CSS = [
   ".wl-brand-btn:disabled{opacity:.45;cursor:default}",
   ".wl-brand-msg--warn{color:var(--dsw-alias-state-warn-primary)}",
   ".wl-brand-msg--ok{color:var(--dsw-alias-state-success-primary)}",
+  // Hero tagline field (Settings → Brand)
+  ".wl-tagline-input{font:inherit;font-size:13px;width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-radius:7px;padding:7px 10px}",
+  ".wl-tagline-input:focus{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
 ].join("\n")
 
 // ── locale ─────────────────────────────────────────────────────────────────
@@ -418,6 +450,10 @@ const DICT = {
     "upload.heroIconLabel": "Hero icon",
     "upload.heroIconHint": "Square mark beside the headline on a blank session, rendered at 34 px. Leave it empty to fall back to the brand folder\u2019s icon.",
     "upload.showHeroIcon": "Show icon in hero",
+    "upload.taglineLabel": "Hero tagline",
+    "upload.taglinePlaceholder": "Into the Unknown",
+    "upload.taglineHint": "Replaces the blank-session headline above the composer. Leave empty to keep the default.",
+    "upload.taglineNoSeam": "Saved, but this harness renders no hero tagline seat \u2014 the headline stays as shipped.",
     "upload.saved": "Saved \u2014 your brand is live now.",
     "upload.saveBtn": "Save brand",
     "upload.revertBtn": "Revert",
@@ -457,6 +493,10 @@ const DICT = {
     "upload.heroIconLabel": "\u4e3b\u6807\u5fd7\u56fe\u6807",
     "upload.heroIconHint": "\u663e\u793a\u5728\u65b0\u4f1a\u8bdd\u6807\u9898\u65c1\u7684\u65b9\u5f62\u56fe\u6807\uff0c\u6e32\u67d3\u4e3a 34px\u3002\u7559\u7a7a\u5219\u56de\u9000\u5230\u54c1\u724c\u6587\u4ef6\u5939\u4e2d\u7684\u56fe\u6807\u3002",
     "upload.showHeroIcon": "\u5728\u4e3b\u6807\u5fd7\u533a\u663e\u793a\u56fe\u6807",
+    "upload.taglineLabel": "\u4e3b\u6807\u9898\u6807\u8bed",
+    "upload.taglinePlaceholder": "\u63a2\u7d22\u672a\u81f3\u4e4b\u5883",
+    "upload.taglineHint": "\u66ff\u6362\u8f93\u5165\u6846\u4e0a\u65b9\u7a7a\u767d\u4f1a\u8bdd\u7684\u4e3b\u6807\u9898\u3002\u7559\u7a7a\u5219\u4fdd\u6301\u9ed8\u8ba4\u6587\u6848\u3002",
+    "upload.taglineNoSeam": "\u5df2\u4fdd\u5b58\uff0c\u4f46\u5f53\u524d\u8fd0\u884c\u73af\u5883\u6ca1\u6709\u4e3b\u6807\u9898\u6807\u8bed\u5ea7\u4f4d\uff0c\u6807\u9898\u5c06\u4fdd\u6301\u9ed8\u8ba4\u6587\u6848\u3002",
     "upload.saved": "\u5df2\u4fdd\u5b58\u2014\u2014\u54c1\u724c\u5df2\u751f\u6548\u3002",
     "upload.saveBtn": "\u4fdd\u5b58\u54c1\u724c",
     "upload.revertBtn": "\u8fd8\u539f",
@@ -483,6 +523,21 @@ function translate(key) {
 
 // Written from inside apply(), never at module scope.
 const MARKER = "__WHITE_LABEL__"
+
+// ── does the running harness carry the `conversation.hero.tagline` seam? ─────
+// The seam is a narrow patch to the vendored client bundle (read
+// patches/patch-hero-brand-tagline.mjs for why a plugin cannot declare a slot
+// itself — slot names live in the compiled render tree). Mitsumeru 0.2.0 and
+// later ship it: prepare-harness.sh applies that patch to the staged harness
+// BEFORE electron-builder signs the app, so the seat is inside the signature. A
+// stock DSH install does not have it. A page cannot ask the slot registry
+// whether a name is renderable, and an HTTP probe of the bundle is both wrong
+// and unreliable, so the honest signal is the occupant itself: the seam is the
+// only caller that passes `fallbackText`, so HeroTagline observing that prop IS
+// the proof that this harness renders the seat. Before the hero has ever
+// mounted, the answer is simply unknown — a tagline save then says so instead of
+// looking broken.
+let SEAM = "unknown" // "unknown" | "present"
 
 window.__ModuleLoader__.load({
   id: "@muen/dsh-white-label",
@@ -782,6 +837,13 @@ window.__ModuleLoader__.load({
         setSaving(false)
         const hostOk = results.every(Boolean)
         setNotice({ kind: hostOk ? "ok" : "warn", text: translate(hostOk ? "upload.saved" : "upload.localOnly") })
+        // A tagline saved onto a harness without the seam persists but cannot
+        // render — say so instead of leaving a "saved" that looks broken. The
+        // hero has usually mounted by the time Settings is open (the app boots
+        // into a blank session), so an "unknown" seam is a real signal.
+        if (hostOk && dirtyKeys.includes(BRAND_TAGLINE_FIELD) && SEAM === "unknown") {
+          setNotice({ kind: "warn", text: translate("upload.taglineNoSeam") })
+        }
       }
       const revert = () => { setDraft({ ...committed }); setNotice(null) }
       return react_jsx_runtime.jsxs("div", { className: "wl-brand-page", children: [
@@ -820,6 +882,18 @@ window.__ModuleLoader__.load({
           ] }),
           react_jsx_runtime.jsx(LogoCell, { field: "heroIcon", label: translate("upload.heroIconLabel"), value: draft.heroIcon, onChange: setField }),
           react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.heroIconHint") })
+        ] }),
+        // Hero tagline — the copy above the composer on a blank session. Plain
+        // text: same durable namespace as the marks, same Save button.
+        react_jsx_runtime.jsx("div", { className: "wl-brand-card", children: [
+          react_jsx_runtime.jsx("div", { className: "wl-logo-cell-label", children: translate("upload.taglineLabel") }),
+          react_jsx_runtime.jsx("input", {
+            type: "text", className: "wl-tagline-input", maxLength: 200,
+            value: draft.brandTagline || "",
+            placeholder: translate("upload.taglinePlaceholder"),
+            onChange: (e) => setField(BRAND_TAGLINE_FIELD, e.target.value)
+          }),
+          react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.taglineHint") })
         ] }),
         react_jsx_runtime.jsx("div", { className: "wl-brand-actions", children: [
           react_jsx_runtime.jsx("button", {
@@ -939,6 +1013,31 @@ window.__ModuleLoader__.load({
         style: { ...size, objectFit: "contain" },
         "data-ls-skip": ""
       })
+    }
+
+    // The hero tagline: occupies the `conversation.hero.tagline` seam that the
+    // HeroShell patch adds in place of the headline text node. The seam is
+    // additive and OPTIONAL:
+    //
+    //   - An empty `brandTagline` re-renders the upstream headline handed in as
+    //     `fallbackText`, so the occupant can always be registered and the words
+    //     never disappear while the brand is being edited. (A registered occupant
+    //     REPLACES the slot's own fallback, so returning null here would blank the
+    //     hero rather than restore the shipped copy.)
+    //   - On a harness WITHOUT the seam this registration simply never renders;
+    //     nothing else changes, and the Settings page says so after a save.
+    function HeroTagline(props) {
+      const fallbackText = props.fallbackText
+      const headlineClassName = props.headlineClassName
+      // Running means the patched HeroShell rendered this seat — see SEAM above.
+      if (SEAM !== "present" && typeof fallbackText === "string") SEAM = "present"
+      const uploaded = useSyncExternalStoreSafe(subscribeBrand, getBrandSnapshot)
+      const text = uploaded.brandTagline || fallbackText
+      if (!text) return null
+      return React.createElement("span", {
+        "data-ls-skip": "",
+        className: headlineClassName ? headlineClassName + " wl-tagline" : "wl-tagline"
+      }, text)
     }
 
     // ── apply ─────────────────────────────────────────────────────────────
@@ -1120,6 +1219,12 @@ window.__ModuleLoader__.load({
               yield ctx.slots.register({ name: "sidebar.brand.mark" }, SidebarMark)
               yield ctx.slots.register({ name: "sidebar.brand.name" }, SidebarName)
               yield ctx.slots.register({ name: "conversation.hero.brand.mark" }, HeroMark)
+              // Try the tagline seat on its own (patched builds only) so a harness
+              // without the seam cannot take the three seats above down with it.
+              try {
+                yield ctx.slots.inject("conversation.hero.tagline", () =>
+                  ctx.slots.register({ name: "conversation.hero.tagline" }, HeroTagline))
+              } catch { /* seam absent → the tagline is a no-op on this build */ }
             })))
       } catch {}
 
@@ -1128,6 +1233,7 @@ window.__ModuleLoader__.load({
         accentRow: WL_ROW_ID,
         accentOrder: 10.5,
         brandOrder: 20,
+        taglineField: BRAND_TAGLINE_FIELD,
         at: new Date().toISOString()
       }
     }

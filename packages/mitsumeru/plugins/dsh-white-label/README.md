@@ -1,20 +1,22 @@
 # @muen/dsh-white-label
 
-A **filesystem-based white-label brand plugin** for DeepSeek Harness. Reads brand files (an `icon.*` mark and a `logo.*` lockup) from `<DSH_HOME>/brand/` and exposes them through a cordis service — no shell bridge, no `mitsumeru:*` preload needed.
+A **filesystem-based white-label brand plugin** for DeepSeek Harness. Reads brand files (an `icon.*` mark and a `logo.*` lockup) from `<DSH_HOME>/brand/` and exposes them through a cordis service — no shell bridge, no `mitsumeru:*` preload needed. It also owns the Settings → Brand page and the durable `white-label-brand` settings namespace behind it.
 
 ## How it works
 
-The host half reads and validates brand files from the profile's brand folder. The browser half consumes the service to render brand marks in the sidebar and hero — two separate seats, each configured on its own.
+The host half reads and validates brand files from the profile's brand folder, and owns the durable settings namespace (the uploaded logos, the two seat marks with their switches, and the hero tagline). The browser half consumes both to render brand marks in the sidebar and hero — two separate seats, each configured on its own — and to render the hero tagline.
 
-## The two mark seats
+## Settings → Brand
 
-The **sidebar** (a 24 px rail mark) and the **hero** (a 34 px mark beside the blank-session headline) are different surfaces, so Settings → Brand configures them independently:
+The **sidebar** (a 24 px rail mark) and the **hero** (a 34 px mark beside the blank-session headline) are different surfaces, so they are configured independently:
 
 | Setting | What it does |
 |---|---|
 | Sidebar logo — light / dark | the wordmark lockup in the sidebar name strip (height-capped at 24 px) |
 | Show icon in sidebar + Sidebar icon | the rail mark and its own visibility switch (24 px) |
 | Show icon in hero + Hero icon | the hero-seat mark and its own visibility switch (34 px) |
+| Accent — light / dark | the brand accent colour for each mode |
+| Hero tagline | the copy on a blank session, above the composer (see below) |
 
 Each seat falls back to the brand folder's `icon.*` when no upload is set, so a filesystem-only brand keeps working with no settings at all. Before the split, one uploaded icon fed both seats under a single switch; that legacy mark is still read, and the first save on the Brand page materializes both seats and clears it.
 
@@ -42,6 +44,14 @@ A raster icon renders as an image: it is drawn exactly as exported and does **no
 
 If the folder doesn't exist, the plugin is a no-op.
 
+## Hero tagline
+
+One text field — **Settings → Brand → Hero tagline** — replaces the blank-session headline ("Into the Unknown" / 探索未至之境) above the composer. It is persisted as `brandTagline` in the durable `white-label-brand` settings namespace (mirrored to `localStorage` for first paint), capped at 200 characters, and **empty keeps the shipped headline**: the occupant re-renders the copy the harness hands it as `fallbackText`, so the words never disappear while a brand is being edited.
+
+The headline has no slot of its own, and a plugin cannot declare one — slot names live in the compiled render tree, and a parent factory must declare a child before any renderer may call it. So the seat comes from a narrow, additive patch to the vendored client bundle, `patches/patch-hero-brand-tagline.mjs`, which the app build applies to the staged harness **before** electron-builder signs the app (`prepare-harness.sh`), keeping the edit inside the code signature. Mitsumeru 0.2.0 and later ship it. On a stock DSH install the seat does not exist, the occupant is inert, and a save says so rather than looking broken.
+
+The seam is two edits, not one: the `renderSlot("conversation.hero.tagline", …)` call in `HeroShell` **and** the seat's declaration in the `conversation.content` factory's `children` table. A call without the declaration throws `SlotOwnershipError` during render and unmounts the whole blank-session view — hero and composer. `scripts/verify-hero-tagline.mjs` fails on that shape, and `prepare-harness.sh` runs it as a build gate.
+
 ## Install
 
 ```bash
@@ -58,9 +68,11 @@ dsh plugin --profile mitsu add ./plugins/dsh-white-label
 
 | | `dsh-white-label` | `dsh-brand-swap` |
 |---|---|---|
-| Storage | Filesystem (`<DSH_HOME>/brand/`) | Cordis settings doc |
-| Logo source | Pre-placed files | Upload via Settings → Brand |
+| Shipped in | the Mitsumeru app (bundled) | the public market |
+| Brand source | `<DSH_HOME>/brand/` **and** uploads in Settings → Brand | uploads in Settings → Brand |
+| Storage | `white-label-brand` settings namespace + the filesystem | its own cordis settings doc |
+| Hero tagline | yes | yes |
 | Accent picker | Yes (per-mode light/dark) | No |
-| Use case | Static brand deployment | Interactive brand configuration |
+| Use case | the brand a Mitsumeru deployment ships | per-profile identity on a stock harness |
 
 Both register into the same DSH brand slots. **Do not co-install.**
