@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -162,11 +163,41 @@ function ensureProfile(stateDir: string, pluginNames: string[], harnessRoot: str
     }
     const linkPath = join(profileDir, 'node_modules', name)
     try {
-      const current = existsSync(linkPath) ? realpathSync(linkPath) : undefined
+      // realpath on the LINK, tolerating one that dangles: an app update moves the
+      // harness tree, so a profile written by the previous version can point at a
+      // path that no longer exists. That threw before, the catch below logged
+      // link-failed, and the stale link was never repaired — so the app stayed
+      // broken until someone deleted the profile.
+      let current: string | undefined
+      try {
+        current = realpathSync(linkPath)
+      } catch {
+        current = undefined
+      }
       if (current === realpathSync(target)) continue
       mkdirSync(dirname(linkPath), { recursive: true })
-      rmSync(linkPath, { recursive: true, force: true })
-      symlinkSync(target, linkPath, 'dir')
+      // Removing whatever is already there is platform-specific, and on Windows it
+      // is not a detail. The link there is a JUNCTION:
+      //
+      //   * `'dir'` asks for a real directory symlink, which Windows only allows
+      //     with Developer Mode or an elevated process. A stock rig gets EPERM, the
+      //     catch below logs link-failed, the profile never composes, and the boot
+      //     dies with "cannot resolve profile bundle". A junction needs no
+      //     privilege at all.
+      //   * a junction is reported as a DIRECTORY (not a symlink), so
+      //     rmSync(recursive) can recurse through it and delete the vendored
+      //     package inside the app bundle — the very files the link exists to
+      //     expose. rmdir removes the reparse point and leaves the target alone.
+      if (process.platform === 'win32') {
+        try {
+          rmdirSync(linkPath)
+        } catch {
+          /* nothing there, or not a junction */
+        }
+      } else {
+        rmSync(linkPath, { recursive: true, force: true })
+      }
+      symlinkSync(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir')
       console.log(`[harness] plugin-linked ${name}`)
     } catch (error) {
       // Loud, and named. A link that cannot be made is a package the boot will
