@@ -1127,6 +1127,10 @@ window.__ModuleLoader__.load({
 
       let brandBound
       let brandRev2 = 0
+      // Assigned further down, once the brand seats are wired. The filesystem
+      // brand arrives asynchronously, so a brand can become configured AFTER
+      // boot — this is the hook that claims the seats when it does.
+      let registerBrandSeatsIfBranded = () => {}
       const loadBrand = async () => {
         if (!brandService || typeof brandService.readBrand !== "function") return
         try {
@@ -1136,6 +1140,7 @@ window.__ModuleLoader__.load({
           fsBrand.logo = result.logo
           publishFsBrand()
           brandBound?.sync(result.icon, result.logo, result.folder, result.errors, reveal, ++brandRev2)
+          registerBrandSeatsIfBranded()
         } catch {}
       }
 
@@ -1207,26 +1212,57 @@ window.__ModuleLoader__.load({
         )
       } catch {}
 
-      // ── sidebar marks ───────────────────────────────────────────────────
-      // Wrapped in try/catch: the stock dsh-web-app already registers an
-      // occupant for sidebar.brand.mark. If our registration fails because the
-      // slot is already taken, the brand row in Settings → General must still
-      // work — the sidebar is a separate concern.
+      // ── hero tagline: uncontested ───────────────────────────────────────
+      // The shell's seam declares this seat and nothing else registers it, so it
+      // does not wait on a brand being configured — the renderer itself decides
+      // whether a tagline was set. Kept out of the brand-seat chain below so a
+      // harness without the seam cannot take these down with it.
       try {
-        ctx.slots.inject("sidebar.brand.mark", () =>
-          ctx.slots.inject("sidebar.brand.name", () =>
-            ctx.slots.inject("conversation.hero.brand.mark", function* () {
-              yield ctx.slots.register({ name: "sidebar.brand.mark" }, SidebarMark)
-              yield ctx.slots.register({ name: "sidebar.brand.name" }, SidebarName)
-              yield ctx.slots.register({ name: "conversation.hero.brand.mark" }, HeroMark)
-              // Try the tagline seat on its own (patched builds only) so a harness
-              // without the seam cannot take the three seats above down with it.
-              try {
-                yield ctx.slots.inject("conversation.hero.tagline", () =>
-                  ctx.slots.register({ name: "conversation.hero.tagline" }, HeroTagline))
-              } catch { /* seam absent → the tagline is a no-op on this build */ }
-            })))
-      } catch {}
+        ctx.slots.inject("conversation.hero.tagline", () =>
+          ctx.slots.register({ name: "conversation.hero.tagline" }, HeroTagline))
+      } catch { /* seam absent → the tagline is a no-op on this build */ }
+
+      // ── brand seats: exclusive, and contested ───────────────────────────
+      // @muen/dsh-brand-mitsumeru registers these same three seats at priority 0,
+      // and a single slot REFUSES a same-priority duplicate with an uncaught throw
+      // — so exactly one plugin may hold them, and which one is a decision rather
+      // than an accident:
+      //
+      //   owner decision, 2026-09-18 — the configuration layer owns the brand
+      //   seats when a brand is actually configured (an uploaded mark, or the
+      //   filesystem brand folder); with neither, the product mark keeps them.
+      //
+      // Two details are load-bearing. Priority -1 is how a shadow is expressed
+      // ("register at a different priority to shadow it (lowest renders)"), and the
+      // registration is CONDITIONAL: every renderer here returns null without a
+      // brand source, so claiming the seats unconditionally would displace the
+      // product mark with nothing — the failure this plugin already measured once
+      // (see the note above HeroMark, 2026-09-15).
+      let brandSeatsRegistered = false
+      const brandSeatsWanted = () => {
+        const uploaded = getBrandSnapshot()
+        const hasUpload = Boolean(
+          uploaded &&
+            (uploaded.sidebarIcon || uploaded.heroIcon || uploaded.logoLight || uploaded.logoDark),
+        )
+        const hasFiles = Boolean(fsBrand && (fsBrand.icon || fsBrand.logo))
+        return hasUpload || hasFiles
+      }
+      const registerBrandSeats = () => {
+        if (brandSeatsRegistered || !brandSeatsWanted()) return
+        brandSeatsRegistered = true
+        try {
+          ctx.slots.inject("sidebar.brand.mark", () =>
+            ctx.slots.inject("sidebar.brand.name", () =>
+              ctx.slots.inject("conversation.hero.brand.mark", function* () {
+                yield ctx.slots.register({ name: "sidebar.brand.mark", priority: -1 }, SidebarMark)
+                yield ctx.slots.register({ name: "sidebar.brand.name", priority: -1 }, SidebarName)
+                yield ctx.slots.register({ name: "conversation.hero.brand.mark", priority: -1 }, HeroMark)
+              })))
+        } catch {}
+      }
+      registerBrandSeatsIfBranded = registerBrandSeats
+      registerBrandSeats()
 
       window[MARKER] = {
         mounted: true,

@@ -1,6 +1,6 @@
 {
   "name": "@muen/dsh-white-label",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-dev.1",
   "description": "Filesystem-based white-label brand plugin for DeepSeek Harness — reads brand files from <DSH_HOME>/brand/ and exposes them as a cordis service.",
   "license": "MIT",
   "repository": {

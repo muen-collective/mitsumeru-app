@@ -326,13 +326,13 @@ app.whenReady().then(async () => {
   //   * anything else from ANY shipped bundle — a failure. An earlier version
   //     filtered by plugin name alone, which silently swallowed exactly the
   //     error this list now names.
-  const KNOWN_UNATTRIBUTED = [
-    // 0.2.0 shipped @muen/dsh-brand-mitsumeru and @muen/dsh-white-label onto the
-    // same exclusive sidebar.brand.mark / .name seats; the second registration
-    // throws. Visible only in the console, so it is named here rather than lost.
-    'single slot "sidebar.brand.mark" already has a registration',
-    'single slot "sidebar.brand.name" already has a registration',
-  ]
+  // Currently EMPTY, and that is the point: the one entry this list ever held was
+  // the brand-seat collision (@muen/dsh-brand-mitsumeru and @muen/dsh-white-label
+  // both claiming the exclusive sidebar/hero seats), fixed on 2026-09-18 by making
+  // white-label claim them at priority -1 and only when a brand is configured. The
+  // list survives as the place to name a measured, recorded pre-existing defect —
+  // never a place to make an unexplained error go away.
+  const KNOWN_UNATTRIBUTED = []
   const attributable = consoleErrors.filter((line) =>
     SHIPPED_IDS.some((id) => line.includes(id)) ||
     // turn-summary's seat: a keyed conflict names the slot, not the plugin.
