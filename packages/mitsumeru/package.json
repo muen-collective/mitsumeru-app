@@ -29,6 +29,8 @@
     "manifest:merge": "node scripts/merge-mac-manifest.mjs",
     "store:credentials": "bash scripts/store-notary-credentials.sh",
     "verify:release": "bash scripts/verify-release.sh",
+    "verify:artifacts": "bash scripts/verify-artifacts.sh",
+    "verify:arch": "bash scripts/verify-arch.sh",
     "check:label": "bash scripts/check-version-label.sh",
     "smoke": "bash scripts/smoke.sh",
     "smoke:finder": "bash scripts/smoke-finder.sh",
