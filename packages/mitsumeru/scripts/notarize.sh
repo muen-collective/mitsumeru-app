@@ -24,8 +24,31 @@
 set -euo pipefail
 cd "$(dirname "$0")/.." # packages/mitsumeru
 
-APP=release/mac-arm64/Mitsumeru.app
+# ── which architecture this run owns ────────────────────────────────────────
+# One invocation per arch, because each app is notarized and stapled as its own
+# bundle and then repackaged into its own artifacts. Everything this run writes is
+# confined to $SUFFIX, so the other arch's dmg/zip/manifest survive it.
+#
+# The previous shape was single-arch by construction: it deleted EVERY
+# release/*.dmg, *.zip and *-mac.yml and repacked only from release/mac-arm64.
+# That is exactly how a two-arch release silently became arm64-only — 0.2.0 and
+# 0.2.1 both shipped that way, and the build log said nothing.
+ARCH=arm64
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --arch) ARCH=$2; shift 2 ;;
+    --arch=*) ARCH=${1#*=}; shift ;;
+    *) echo "[FAIL] notarize: unknown argument: $1"; exit 1 ;;
+  esac
+done
+case "$ARCH" in
+  arm64) APP_DIR=mac-arm64; SUFFIX=-arm64 ;;
+  x64)   APP_DIR=mac;       SUFFIX='' ;;
+  *) echo "[FAIL] notarize: unsupported --arch $ARCH (expected arm64 or x64)"; exit 1 ;;
+esac
+APP="release/$APP_DIR/Mitsumeru.app"
 VERSION=$(node -p "require('./package.json').version")
+echo "notarize: arch $ARCH → $APP"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
   AUTH=(--keychain-profile "$NOTARY_PROFILE")
@@ -42,7 +65,7 @@ MSG
   exit 2
 fi
 
-[ -d "$APP" ] || { echo "[FAIL] $APP missing — run pnpm package:mac first"; exit 1; }
+[ -d "$APP" ] || { echo "[FAIL] $APP missing — run pnpm package:mac:$ARCH first"; exit 1; }
 
 # The identity is read back from the app that was just signed, so this script
 # never carries a name either. `Authority=` is the leaf certificate.
@@ -78,8 +101,19 @@ echo "notarize: repackaging dmg + zip from the stapled app"
 # stapled to it", on the extracted copy). spctl still called that copy `accepted`
 # because it could reach Apple and ask. Deleting first makes the rewrite
 # unavoidable, which is the entire point of repackaging from the stapled app.
-rm -f release/*.dmg release/*.dmg.blockmap release/*.zip release/*.zip.blockmap release/*-mac.yml
-npx electron-builder --mac dmg zip --prepackaged "$APP" --publish never
+# Only THIS arch's artifacts, plus the channel manifest this run is about to
+# replace. The other arch's artifacts are the product of its own run and must
+# survive — deleting them is what made 0.2.0 and 0.2.1 arm64-only.
+rm -f "release/Mitsumeru-$VERSION$SUFFIX.dmg" "release/Mitsumeru-$VERSION$SUFFIX.dmg.blockmap" \
+      "release/Mitsumeru-$VERSION$SUFFIX-mac.zip" "release/Mitsumeru-$VERSION$SUFFIX-mac.zip.blockmap" \
+      release/latest-mac.yml release/dev-mac.yml
+# `--$ARCH` is load-bearing, not decoration. Without it electron-builder packages
+# for the HOST architecture rather than the app it was handed — measured
+# 2026-09-19: `--prepackaged release/mac/Mitsumeru.app` (the Intel app) produced
+# ARM64 artifacts on this machine, reused the existing arm64 zip as "up to date",
+# and the archive was named in this run's manifest rewrite. The x64 app never
+# became a dmg at all, and only the caller's existence check noticed.
+npx electron-builder --mac dmg zip "--$ARCH" --prepackaged "$APP" --publish never
 
 # --- 2b. the update manifest ------------------------------------------------
 #
@@ -98,22 +132,21 @@ npx electron-builder --mac dmg zip --prepackaged "$APP" --publish never
 #     keeps ONE rule — the version names the channel — instead of pinning
 #     `channel:` in electron-builder.yml, which would be a second source of the
 #     same fact, free to drift from the version.
-MANIFEST=$(ls release/*-mac.yml 2>/dev/null | head -1 || true)
+MANIFEST=$(ls release/latest-mac.yml release/*-mac.yml 2>/dev/null | head -1 || true)
 [ -n "$MANIFEST" ] || { echo "[FAIL] the repackage wrote no update manifest"; exit 1; }
-CHANNEL=$(node -p "const v = require('./package.json').version; v.includes('-') ? v.split('-')[1].split('.')[0] : 'latest'")
-WANTED="release/$CHANNEL-mac.yml"
-if [ "$MANIFEST" != "$WANTED" ]; then
-  echo "notarize: manifest $(basename "$MANIFEST") → $(basename "$WANTED") (the name a $CHANNEL client asks for)"
-  mv "$MANIFEST" "$WANTED"
-fi
-if [ "$(ls release/*-mac.yml | wc -l | tr -d ' ')" != "1" ]; then
-  echo "[FAIL] more than one update manifest in release/ — the feed would serve an ambiguous set"
-  exit 1
-fi
+# Kept as this arch's FRAGMENT rather than published as the feed: a two-arch feed
+# is one file listing both arches' artifacts, and electron-builder writes one
+# manifest per invocation. `pnpm manifest:merge` assembles the feed from these.
+FRAGMENT="release/.manifest-$ARCH.yml"
+mv "$MANIFEST" "$FRAGMENT"
+echo "notarize: manifest $(basename "$MANIFEST") → $(basename "$FRAGMENT") (the feed is merged across arches after both runs)"
 
 # --- 3. the dmg -------------------------------------------------------------
 
-DMG=$(ls -t release/*.dmg | head -1)
+# This arch's dmg, by name: with both arches in release/, `ls -t` picks whichever
+# was written last — which is how the wrong image gets signed and stapled.
+DMG="release/Mitsumeru-$VERSION$SUFFIX.dmg"
+[ -f "$DMG" ] || { echo "[FAIL] the repackage wrote no $DMG"; exit 1; }
 # electron-builder does not sign the dmg (verified 2026-09-10: `codesign -dv` on
 # the artifact says "code object is not signed at all"), and an unsigned disk
 # image cannot be notarized — so sign it here, with a timestamp, first.
@@ -136,7 +169,7 @@ xcrun stapler validate "$DMG"
 # Patched rather than regenerated: the rest of the file is the builder's output
 # and is correct, and rewriting the whole manifest by hand would put our own
 # idea of the format between the client and its own tooling.
-MANIFEST="release/$CHANNEL-mac.yml"
+MANIFEST="$FRAGMENT"
 DMG_SHA=$(openssl dgst -sha512 -binary "$DMG" | openssl base64 -A)
 DMG_SIZE=$(stat -f %z "$DMG")
 node --input-type=module -e '
@@ -159,5 +192,6 @@ writeFileSync(file, lines.join("\n"));
 console.log(`notarize: manifest ${url} → ${size}B, sha512 updated`);
 ' "$MANIFEST" "$(basename "$DMG")" "$DMG_SHA" "$DMG_SIZE"
 
-echo "notarize: done — $DMG"
-echo "notarize: verify with pnpm verify:release"
+echo "notarize: done — $ARCH: $DMG"
+echo "notarize: fragment written: $FRAGMENT"
+echo "notarize: once BOTH arches have run: pnpm manifest:merge && pnpm verify:release"

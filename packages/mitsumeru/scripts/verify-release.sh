@@ -29,9 +29,28 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." # packages/mitsumeru
 
-APP=release/mac-arm64/Mitsumeru.app
-DMG=$(ls -t release/*arm64.dmg 2>/dev/null | head -1 || true)
-ZIP=$(ls -t release/*arm64-mac.zip 2>/dev/null | head -1 || true)
+# ── both architectures, one invocation each ─────────────────────────────────
+# The release ships arm64 AND x64, so "the app" is no longer a single path. With
+# no argument this script runs itself once per arch and requires BOTH to pass;
+# with `--arch` it checks one. Per-arch rather than a loop inside one run, so that
+# every existing assertion — the staple inside the zip, the app inside the dmg,
+# each manifest entry's sha512 — applies to EACH build. That is exactly what was
+# missing when an arm64-only feed shipped beside an Intel app that could not
+# start: the gate only ever looked at release/*arm64.*.
+if [ "${1:-}" != "--arch" ] && [ "${1:-}" != "--arch="* ]; then
+  bash "$0" --arch x64 && bash "$0" --arch arm64
+  exit $?
+fi
+ARCH=${2:-x64}
+case "$ARCH" in
+  x64) APP=release/mac/Mitsumeru.app; SUFFIX='' ;;
+  arm64) APP=release/mac-arm64/Mitsumeru.app; SUFFIX=-arm64 ;;
+  *) echo "[FAIL] verify-release: unsupported --arch $ARCH (expected x64 or arm64)"; exit 1 ;;
+esac
+VERSION=$(node -p "require('./package.json').version")
+DMG="release/Mitsumeru-$VERSION$SUFFIX.dmg"
+ZIP="release/Mitsumeru-$VERSION$SUFFIX-mac.zip"
+echo "── release gate: $ARCH ──"
 status=0
 check() { # check <description> <command...>
   local what="$1"; shift
@@ -43,19 +62,25 @@ check() { # check <description> <command...>
   fi
 }
 
-[ -d "$APP" ] || { echo "[FAIL] $APP missing — run pnpm package:mac"; exit 1; }
+[ -d "$APP" ] || { echo "[FAIL] $APP missing — run pnpm package:mac:$ARCH"; exit 1; }
 
-# Exactly one of each artifact. `release/` accumulates across builds, and a mixed
-# directory is how a stale dmg or zip gets published next to the current one —
-# both the gate's own `ls -t | head -1` and the publish step's globs would take
+# This arch's two artifacts, and no third one. `release/` accumulates across
+# builds, and a mixed directory is how a stale dmg or zip gets published next to
+# the current one — both `ls -t | head -1` and the publish step's globs would take
 # it without complaint. Measured 2026-09-10: a 0.1.1-dev build left the previous
 # 0.1.0-dev dmg and zip in place, and only `pnpm check:label` noticed.
-dmg_count=$(ls release/*arm64.dmg 2>/dev/null | wc -l | tr -d ' ')
-zip_count=$(ls release/*arm64-mac.zip 2>/dev/null | wc -l | tr -d ' ')
-if [ "$dmg_count" = "1" ] && [ "$zip_count" = "1" ]; then
-  echo "[PASS] artifacts: exactly one dmg and one zip in release/"
+if [ -f "$DMG" ] && [ -f "$ZIP" ]; then
+  echo "[PASS] artifacts: $ARCH has one dmg and one zip"
 else
-  echo "[FAIL] artifacts: ${dmg_count} dmg and ${zip_count} zip in release/ — a mixed directory publishes a stale build"
+  echo "[FAIL] artifacts: $ARCH is missing $DMG or $ZIP — run pnpm package:mac:$ARCH && pnpm notarize:$ARCH"
+  status=1
+fi
+all_dmg=$(ls release/*.dmg 2>/dev/null | wc -l | tr -d ' ')
+all_zip=$(ls release/*.zip 2>/dev/null | wc -l | tr -d ' ')
+if [ "$all_dmg" = "2" ] && [ "$all_zip" = "2" ]; then
+  echo "[PASS] artifacts: exactly two dmgs and two zips in release/ (one per arch)"
+else
+  echo "[FAIL] artifacts: ${all_dmg} dmg and ${all_zip} zip in release/ — expected one of each per arch, and no stale leftovers"
   status=1
 fi
 
@@ -225,6 +250,17 @@ console.log(rows.join("\n"));
       status=1
     fi
   done
+
+  # And the feed must describe BOTH architectures. A manifest listing one is the
+  # 0.2.0/0.2.1 shape: an Intel client finds no suitable file and silently stays
+  # on whatever it has, which looks like "no update available" rather than a bug.
+  entry_count=$(printf '%s\n' "$entries" | grep -c . || true)
+  if [ "$entry_count" = "4" ]; then
+    echo "[PASS] manifest: lists all four artifacts (a zip and a dmg per arch)"
+  else
+    echo "[FAIL] manifest: lists ${entry_count} artifact(s), expected 4 — x64 and arm64, zip and dmg. Run pnpm manifest:merge after both arches' notarize runs"
+    status=1
+  fi
 fi
 
 exit "$status"
