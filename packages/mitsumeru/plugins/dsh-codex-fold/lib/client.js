@@ -371,7 +371,7 @@ var __dshcfBundle = (() => {
   }
 
   // src/styles.css
-  var styles_default = '/* Keep native content searchable while removing folded work from flex/grid spacing. */\n[data-dshcf-folded][hidden="until-found"] {\n  position: absolute !important;\n  content-visibility: hidden !important;\n  inline-size: 0 !important;\n  block-size: 0 !important;\n  min-inline-size: 0 !important;\n  min-block-size: 0 !important;\n  margin: 0 !important;\n  padding: 0 !important;\n  border-width: 0 !important;\n  overflow: clip !important;\n}\n.dshcf-group {\n  appearance: none;\n  display: flex;\n  align-items: center;\n  align-self: flex-start;\n  gap: 6px;\n  box-sizing: border-box;\n  max-width: 100%;\n  min-width: 0;\n  min-height: calc(24px + var(--dsh-content-font-delta, 0px));\n  margin: 0;\n  padding: 0;\n  border: 0;\n  background: transparent;\n  color: var(--dsw-alias-label-tertiary, #919191);\n  font: 400 var(--dsh-content-font-size-secondary, 13px)/24px system-ui, sans-serif;\n  text-align: left;\n  cursor: pointer;\n}\n.dshcf-group[hidden] { display: none; }\n.dshcf-group:hover { color: var(--dsw-alias-label-primary, #d5d5d5); }\n.dshcf-group:focus-visible { outline: 2px solid var(--dsw-alias-state-focus-ring, #4d6bfe); outline-offset: 3px; border-radius: 3px; }\n.dshcf-group-icon { display: flex; flex: none; width: calc(16px + var(--dsh-content-font-delta, 0px)); height: calc(16px + var(--dsh-content-font-delta, 0px)); align-items: center; justify-content: center; }\n.dshcf-group-icon svg { display: block; width: calc(14px + var(--dsh-content-font-delta, 0px)); height: calc(14px + var(--dsh-content-font-delta, 0px)); }\n.dshcf-group-label { flex: 0 0 auto; min-width: 0; max-width: calc(100% - 40px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }\n.dshcf-group[data-status="running"] .dshcf-group-label,\n.dshcf-group[data-status="waiting"] .dshcf-group-label { max-width: 65%; }\n.dshcf-group-detail { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dsw-alias-label-caption, #7a7a7a); }\n.dshcf-group-detail:empty { display: none; }\n.dshcf-group-chevron { flex: none; width: calc(12px + var(--dsh-content-font-delta, 0px)); height: calc(12px + var(--dsh-content-font-delta, 0px)); opacity: .65; transform: rotate(-90deg); }\n.dshcf-group[aria-expanded="true"] .dshcf-group-chevron { transform: none; }\n.dshcf-group[data-status="running"] .dshcf-group-label { animation: dshcf-pulse 1.6s ease-in-out infinite; }\n.dshcf-group[data-status="error"] { color: var(--dsw-alias-state-error-primary, #e5484d); }\n.dshcf-group[data-status="stopped"], .dshcf-group[data-status="waiting"] { color: var(--dsw-alias-state-warning-primary, #c58a2c); }\n@keyframes dshcf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }\n@media (prefers-reduced-motion: reduce) { .dshcf-group[data-status="running"] .dshcf-group-label { animation: none; } }\n';
+  var styles_default = '/* Keep native content searchable while removing folded work from flex/grid spacing. */\n[data-dshcf-folded][hidden="until-found"] {\n  position: absolute !important;\n  content-visibility: hidden !important;\n  inline-size: 0 !important;\n  block-size: 0 !important;\n  min-inline-size: 0 !important;\n  min-block-size: 0 !important;\n  margin: 0 !important;\n  padding: 0 !important;\n  border-width: 0 !important;\n  overflow: clip !important;\n}\n.dshcf-group {\n  appearance: none;\n  display: flex;\n  align-items: center;\n  align-self: flex-start;\n  gap: 6px;\n  box-sizing: border-box;\n  max-width: 100%;\n  min-width: 0;\n  min-height: calc(24px + var(--dsh-content-font-delta, 0px));\n  margin: 0;\n  padding: 0;\n  border: 0;\n  background: transparent;\n  color: var(--dsw-alias-label-tertiary, #919191);\n  font-family: inherit; font-size: var(--dsh-content-font-size-secondary, 13px); font-weight: 400; line-height: calc(24px + var(--dsh-content-font-delta, 0px));\n  text-align: left;\n  cursor: pointer;\n}\n.dshcf-group[hidden] { display: none; }\n.dshcf-group:hover { color: var(--dsw-alias-label-primary, #d5d5d5); }\n.dshcf-group:focus-visible { outline: 2px solid var(--dsw-alias-state-focus-ring, #4d6bfe); outline-offset: 3px; border-radius: 3px; }\n.dshcf-group-icon { display: flex; flex: none; width: calc(16px + var(--dsh-content-font-delta, 0px)); height: calc(16px + var(--dsh-content-font-delta, 0px)); align-items: center; justify-content: center; }\n.dshcf-group-icon svg { display: block; width: calc(14px + var(--dsh-content-font-delta, 0px)); height: calc(14px + var(--dsh-content-font-delta, 0px)); }\n.dshcf-group-label { flex: 0 0 auto; min-width: 0; max-width: calc(100% - 40px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }\n.dshcf-group[data-status="running"] .dshcf-group-label,\n.dshcf-group[data-status="waiting"] .dshcf-group-label { max-width: 65%; }\n.dshcf-group-detail { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--dsw-alias-label-caption, #7a7a7a); }\n.dshcf-group-detail:empty { display: none; }\n.dshcf-group-chevron { flex: none; width: calc(12px + var(--dsh-content-font-delta, 0px)); height: calc(12px + var(--dsh-content-font-delta, 0px)); opacity: .65; transform: rotate(-90deg); }\n.dshcf-group[aria-expanded="true"] .dshcf-group-chevron { transform: none; }\n.dshcf-group[data-status="running"] .dshcf-group-label { animation: dshcf-pulse 1.6s ease-in-out infinite; }\n.dshcf-group[data-status="error"] { color: var(--dsw-alias-state-error-primary, #e5484d); }\n.dshcf-group[data-status="stopped"], .dshcf-group[data-status="waiting"] { color: var(--dsw-alias-state-warning-primary, #c58a2c); }\n@keyframes dshcf-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }\n@media (prefers-reduced-motion: reduce) { .dshcf-group[data-status="running"] .dshcf-group-label { animation: none; } }\n';
 
   // src/dom-view.ts
   var GroupView = class {
@@ -387,6 +387,15 @@ var __dshcfBundle = (() => {
       this.style.id = "dshcf-v2-style";
       this.style.textContent = styles_default;
       document.head.append(this.style);
+      // Rows stamped by an earlier generation keep their inline font for the life of
+      // the node, and an inline declaration outranks this stylesheet — so loading the
+      // fix would still leave the old size on screen. Clear the stamp on our own rows
+      // once, here: from this point the stylesheet is the only source of their type.
+      for (const row of document.querySelectorAll("[data-dshcf-group]")) {
+        for (const property of ["font", "font-size", "font-weight", "line-height"]) {
+          row.style.removeProperty(property);
+        }
+      }
     }
     writeHidden(element, value) {
       if (element.getAttribute("hidden") === value) return;
@@ -501,12 +510,15 @@ var __dshcfBundle = (() => {
       button.style.border = "0";
       button.style.background = "transparent";
       button.style.color = "var(--dsw-alias-label-tertiary, #919191)";
-      button.style.font = "inherit";
-      // Same tier as a native disclosure row (DisclosureRow.module.css: title 13,
-      // row 24 + body delta). `font: inherit` alone would take the conversation
-      // body size — one step larger than every row this chip sits among.
-      button.style.fontSize = "var(--dsh-content-font-size-secondary, 13px)";
-      button.style.lineHeight = "calc(24px + var(--dsh-content-font-delta, 0px))";
+      // The TYPE is deliberately not written here. `.dshcf-group` owns it, because
+      // an inline declaration is stamped at creation and can never be updated: a
+      // chip that outlives a plugin update keeps the metrics of the generation that
+      // built it, so one transcript renders the same row at two sizes. Not
+      // hypothetical — the 0.2.1 type-scale change wrote font-size inline and left
+      // a pre-fix 14px chip sitting next to a 13px one. The stylesheet takes the
+      // size from the secondary tier (a native ToolRow title), the line height from
+      // the row height plus the body delta, and `font-family: inherit` so the chip
+      // keeps the conversation font instead of the UA button default.
       button.style.textAlign = "left";
       button.style.cursor = "pointer";
       icon.style.display = "inline-flex";

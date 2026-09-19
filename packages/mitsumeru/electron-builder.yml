@@ -95,16 +95,23 @@ mac:
   # mode matters: a build must not depend on credentials a dev machine does not
   # have, and a release must not silently skip the step that makes Gatekeeper
   # accept it.
+  # NO arch list here, deliberately: the harness tree staged by
+  # prepare-harness.sh holds ONE target's native optional dependencies, and
+  # extraResources copies that single tree into whatever this build produces. A
+  # pinned `arch: [arm64, x64]` therefore builds two apps from one tree — measured
+  # 2026-09-19: `--mac --x64` produced release/mac (x86_64, correct) AND
+  # release/mac-arm64 (arm64 binary) whose harness carried the x86_64
+  # node-addon-require-builtin-darwin-x64 — an arm64 app that cannot load its own
+  # addon. The arch now comes from the CLI flags in the per-target npm scripts
+  # (package:mac:x64 / package:mac:arm64 / package:win:x64), which stage first and
+  # then build exactly what they staged.
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+    - dmg
+    - zip
 
 win:
   target:
-    - target: nsis
-      arch: [x64]
+    - nsis
 
 nsis:
   oneClick: false

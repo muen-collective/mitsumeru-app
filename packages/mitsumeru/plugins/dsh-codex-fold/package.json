@@ -1,6 +1,6 @@
 {
   "name": "@muen/dsh-codex-fold",
-  "version": "0.2.1-muen.4",
+  "version": "0.2.1-muen.5",
   "description": "Codex-style agent-loop folding for the DSH conversation, localized: finished turns fold, the thinking/tool/context runs between prose collapse into one summary chip per run, and expanding shows the native rows again. Forked from dsh-auto-collapse 0.2.1 (MIT) with every hardcoded string replaced by locale lookups, plus fixes for an icon-size and stylesheet-lifetime defect.",
   "type": "module",
   "engines": {
