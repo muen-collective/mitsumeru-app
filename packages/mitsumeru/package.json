@@ -38,6 +38,7 @@
     "smoke:native": "bash scripts/smoke-native.sh",
     "verify:mount": "bash scripts/verify-mount.sh",
     "verify:distribution": "bash scripts/verify-distribution.sh",
+    "verify:docs": "bash scripts/verify-docs-truth.sh",
     "brand:probe": "bash scripts/brand-probe.sh",
     "verify:surfaces": "bash scripts/verify-surfaces.sh",
     "capture:live": "bash scripts/capture-live.sh",
