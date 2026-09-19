@@ -26,6 +26,37 @@ STAGE=${TMPDIR:-/tmp}/mitsumeru-harness-stage
 STORE=$(pnpm store path)
 VERSION=$(node -p "require('./package.json').dependencies['@deepseek-ai/dsh']")
 
+# ── target platform + arch ──────────────────────────────────────────────────
+# The tree is staged ONE TARGET AT A TIME, because electron-builder's
+# extraResources copies this single tree into every target it builds. Staging on
+# the host alone is exactly why the Intel and Windows builds never worked: pnpm
+# links only the CURRENT platform's optional dependencies, so the x64 app shipped
+# darwin-arm64 native addons (`node-addon-require-builtin-darwin-arm64`) and an
+# x86_64 process cannot load arm64 code. Measured 2026-09-18 in the build log,
+# which names every platform-specific dependency it could not bundle.
+#
+# Defaults are the host, so a plain `pnpm harness` still means "the dev machine".
+TARGET_OS=$(node -p 'process.platform')
+TARGET_CPU=$(node -p 'process.arch')
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --os) TARGET_OS=$2; shift 2 ;;
+    --cpu) TARGET_CPU=$2; shift 2 ;;
+    --os=*) TARGET_OS=${1#*=}; shift ;;
+    --cpu=*) TARGET_CPU=${1#*=}; shift ;;
+    *) echo "[FAIL] prepare-harness: unknown argument: $1"; exit 1 ;;
+  esac
+done
+case "$TARGET_OS" in
+  darwin|win32|linux) ;;
+  *) echo "[FAIL] prepare-harness: unsupported --os $TARGET_OS"; exit 1 ;;
+esac
+case "$TARGET_CPU" in
+  arm64|x64|ia32) ;;
+  *) echo "[FAIL] prepare-harness: unsupported --cpu $TARGET_CPU"; exit 1 ;;
+esac
+echo "harness resource: staging for $TARGET_OS/$TARGET_CPU (host is $(node -p 'process.platform')/$(node -p 'process.arch'))"
+
 rm -rf "$OUT" "$STAGE"
 mkdir -p "$STAGE"
 # Pin every package of the closure to the version the pinned dsh release itself
@@ -48,7 +79,7 @@ node --input-type=module -e '
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-const [version, outFile, yamlFile] = process.argv.slice(1)
+const [version, outFile, yamlFile, targetOs, targetCpu] = process.argv.slice(1)
 const store = "../../node_modules/.pnpm"
 
 // The release itself, then the versions it declares. The closure is closed under
@@ -99,8 +130,14 @@ writeFileSync(outFile, JSON.stringify({
 }, null, 2) + "\n")
 writeFileSync(yamlFile, "overrides:\n" + Object.entries(overrides)
   .map(([name, v]) => `  ${JSON.stringify(name)}: ${JSON.stringify(v)}`)
-  .join("\n") + "\n")
-' "$VERSION" "$STAGE/package.json" "$STAGE/pnpm-workspace.yaml"
+  .join("\n") + "\n" +
+  // Native optional dependencies for the TARGET, not for the host. This is the
+  // line that decides whether an Intel or Windows build can start at all:
+  // without it pnpm resolves `os`/`cpu` for the machine doing the staging.
+  // (No apostrophes in this block: it is a single-quoted shell argument.)
+  "supportedArchitectures:\n  os:\n    - " + JSON.stringify(targetOs) +
+  "\n  cpu:\n    - " + JSON.stringify(targetCpu) + "\n")
+' "$VERSION" "$STAGE/package.json" "$STAGE/pnpm-workspace.yaml" "$TARGET_OS" "$TARGET_CPU"
 
 # ignore-scripts: the harness's native addons (node-pty, koffi) are denied in
 # pnpm-workspace.yaml and the stock web profile boots without them.
