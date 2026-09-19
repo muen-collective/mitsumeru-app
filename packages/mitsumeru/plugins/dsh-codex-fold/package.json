@@ -1,0 +1,41 @@
+{
+  "name": "@muen/dsh-codex-fold",
+  "version": "0.2.1-muen.4",
+  "description": "Codex-style agent-loop folding for the DSH conversation, localized: finished turns fold, the thinking/tool/context runs between prose collapse into one summary chip per run, and expanding shows the native rows again. Forked from dsh-auto-collapse 0.2.1 (MIT) with every hardcoded string replaced by locale lookups, plus fixes for an icon-size and stylesheet-lifetime defect.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "LICENSE",
+    "FORK.md",
+    "README.md"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-modules",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/muen-collective/muen-plugins"
+  }
+}

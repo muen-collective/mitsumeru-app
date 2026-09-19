@@ -26,7 +26,21 @@ const PROFILE = 'mitsu'
  * Plugins this app ships and composes into its profile. One literal list, so the
  * profile manifest and the bundle a build actually contains cannot drift apart.
  */
-const SHIPPED_PLUGINS = ['@muen/dsh-brand-mitsumeru', '@muen/dsh-eva-theme', '@muen/dsh-white-label']
+const SHIPPED_PLUGINS = [
+  '@muen/dsh-brand-mitsumeru',
+  '@muen/dsh-eva-theme',
+  '@muen/dsh-white-label',
+  // The four Kun-parity quality-of-life plugins, shipped from 0.2.1. Vendored by
+  // prepare-harness.sh; composed in the order the dev profile ran them, so the
+  // shipped composition is the one that was dogfooded. None of them replaces a
+  // community package this app ships — codex-fold's upstream (dsh-auto-collapse)
+  // is deliberately absent, because two folds over one conversation is a double
+  // fold.
+  '@muen/dsh-context-watchdog',
+  '@muen/dsh-turn-summary',
+  '@muen/dsh-changes-card',
+  '@muen/dsh-codex-fold',
+]
 
 /**
  * Packages this app used to compose and no longer does. Removing one from

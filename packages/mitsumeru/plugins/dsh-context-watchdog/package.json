@@ -1,0 +1,35 @@
+{
+  "name": "@muen/dsh-context-watchdog",
+  "version": "2.0.2",
+  "description": "Context alert with a model-aware threshold policy: a full-width banner above the composer when a session's context passes max(floor, min(percent% of the window, ceiling)), offering a new session, a token-banded snooze, or dismissal — plus a Settings -> General row that owns the policy.",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/muen-collective/muen-plugins"
+  },
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}

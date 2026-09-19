@@ -1,0 +1,8 @@
+# context-watchdog — bundle patch layer.
+#
+# One row: mount this package's client half into the profile tree. The Host half
+# has no behaviour (see index.js); the reminder is a Client surface, and the
+# number it reads is already a Client projection.
+- insert:
+    - id: context-watchdog
+      name: '@muen/dsh-context-watchdog'

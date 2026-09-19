@@ -135,9 +135,22 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # bundle — being present on disk is not enough — or the whale keeps the seat.
 # See that file for the measurement.
 #
-# THREE packages. dsh-white-label is the appearance plugin (accent + brand),
-# published from muen-plugins and vendored here so ensureProfile can symlink
-# it into the profile on first boot.
+# dsh-white-label is the appearance plugin (accent + brand), published from
+# muen-plugins and vendored here so ensureProfile can symlink it into the profile
+# on first boot.
+#
+# SEVEN packages as of 0.2.1, when the four Kun-parity quality-of-life plugins
+# joined the set: dsh-turn-summary, dsh-changes-card, dsh-codex-fold and
+# dsh-context-watchdog. All four are Client-only surfaces with empty Host halves
+# (each lib/index.js says why), developed as workspace links in the dev profile
+# and promoted to muen-plugins for this release. They are listed here in the order
+# the dev profile composes them — context-watchdog, turn-summary, changes-card,
+# codex-fold — so the shipped composition is the one that was dogfooded.
+#
+# dsh-codex-fold is a localized fork of the community dsh-auto-collapse 0.2.1
+# (MIT). That community package is deliberately NOT shipped and must not be: both
+# fold the same runs, so shipping the pair double-folds one conversation. Its
+# LICENSE and FORK.md travel with the vendored copy for that reason.
 #
 # dsh-eva-theme is here for the same reason the brand plugin is: its
 # cordis.patch.yml inserts the loader row, and being present on disk is not the
@@ -145,7 +158,7 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # seed module words — see the COMPATIBILITY note at the top of its
 # lib/client.tpl.js for the measured list and the one import that broke in
 # DSH Desktop 2.0.4.
-for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label; do
+for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdog dsh-turn-summary dsh-changes-card dsh-codex-fold; do
   src="plugins/$pkg"
   [ -d "$src" ] || { echo "[FAIL] shipped plugin missing: $src"; exit 1; }
   dest="$OUT/node_modules/@muen/$pkg"
@@ -154,6 +167,13 @@ for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label; do
   mkdir -p "$dest/lib"
   cp "$src/package.json" "$src/cordis.patch.yml" "$dest/"
   cp "$src"/lib/*.js "$dest/lib/"
+  # Documentation and licence travel with the vendored copy, so the package in
+  # the tree matches the `files` list in its own manifest (the same reason a
+  # theme's themes/ are copied) and a fork keeps its upstream licence beside its
+  # code.
+  for extra in README.md LICENSE FORK.md; do
+    if [ -f "$src/$extra" ]; then cp "$src/$extra" "$dest/"; fi
+  done
   # A theme plugin keeps its generated token tables in themes/. The client
   # bundle already inlines them (__SKINS__), so this is not load-bearing at
   # runtime — it is copied so the vendored package matches the `files` list in

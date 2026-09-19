@@ -1,0 +1,8 @@
+# codex-fold — bundle patch layer.
+#
+# One row: mount the localized fork of dsh-auto-collapse (MIT, see LICENSE and
+# FORK.md) into the profile tree. It keeps the native turn row and adds one
+# summary chip per run of thinking/tool/context rows between prose.
+- insert:
+    - id: muen-codex-fold
+      name: '@muen/dsh-codex-fold'

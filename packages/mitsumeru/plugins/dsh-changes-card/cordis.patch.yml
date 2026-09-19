@@ -1,0 +1,8 @@
+# changes-card — bundle patch layer.
+#
+# One row: mount this package's client half into the profile tree. The Host half
+# has no behaviour (see index.js) — the counts are read off the turn's own Chat
+# nodes, so nothing has to be recorded or served.
+- insert:
+    - id: muen-changes-card
+      name: '@muen/dsh-changes-card'

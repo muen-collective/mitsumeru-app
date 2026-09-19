@@ -1,0 +1,8 @@
+# turn-summary — bundle patch layer.
+#
+# One row: mount this package's client half into the profile tree. The Host half
+# has no behaviour (see index.js) — every number the row shows is already a
+# Client value (TurnLocation timing/steps, and the Chat snapshot's tool nodes).
+- insert:
+    - id: muen-turn-summary
+      name: '@muen/dsh-turn-summary'
