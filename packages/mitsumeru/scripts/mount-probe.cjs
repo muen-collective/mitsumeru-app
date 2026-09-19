@@ -355,7 +355,7 @@ app.whenReady().then(async () => {
 
   console.log(
     `[mount-probe] console errors  : ${consoleErrors.length} total — 0 from the four QOL plugins, ` +
-      `${known.length} known pre-existing (the brand-seat pair; see KNOWN_UNATTRIBUTED)`,
+      `${known.length} named pre-existing (see KNOWN_UNATTRIBUTED)`,
   )
   console.log('[mount-probe] PASS: seven bundles composed and served with HTTP 200; no shipped plugin logged a registration error; Settings → General shows the EVA theme row, both skins and the Context reminder row' + (CODEX_FOLD_SLOT_DECLARED ? ', and codex-fold renders its Plugins row' : '; codex-fold\'s Plugins row is unrenderable in this harness (slot declared by no bundle) and was asserted as served + clean instead'))
   app.exit(0)
