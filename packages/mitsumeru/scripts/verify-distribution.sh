@@ -103,12 +103,25 @@ fi
 #
 # Structural, because this failure is silent in a browser: a non-matching regex
 # removes the recommended row rather than erroring.
+#
+# The page names its patterns and MAC_RE is a REFERENCE to PLATFORMS[0].re, not a
+# literal — that indirection is deliberate, because buildModal matches a row back
+# to its table entry by regex identity. So resolve a literal from the named
+# patterns first, and only then fall back to the older single-MAC_RE shape.
+# Measured 2026-09-20: this check read `var MAC_RE = MAC_ARM_RE`, eval'd an
+# undefined identifier, and reported a broken modal on a page whose modal was
+# fine. A gate that reads the wrong line and passes anyway is worse than no gate,
+# which is why finding no literal is a failure rather than a skip.
 
-MAC_RE=$(grep -oE 'var MAC_RE = [^,;]+' "$work/site.html" | head -1 | sed 's/var MAC_RE = //')
-if [ -n "$MAC_RE" ]; then
+MAC_RE_LITERAL=""
+for _name in ARM_DMG_RE MAC_ARM_RE MAC_RE; do
+  _v=$(grep -oE "var $_name = [^,;]+" "$work/site.html" | head -1 | sed "s/var $_name = //")
+  case "$_v" in /*) MAC_RE_LITERAL="$_v"; break;; esac
+done
+if [ -n "$MAC_RE_LITERAL" ]; then
   # Run the page's own regex against our real asset name.
   if node -e "
-    const re = eval('$MAC_RE'.replace(/^PLATFORMS\[0\]\.re\$/,'/arm64\\\\.dmg\$/i'));
+    const re = eval('$MAC_RE_LITERAL'.replace(/^PLATFORMS\[0\]\.re\$/,'/arm64\\\\.dmg\$/i'));
     process.exit(re.test('Mitsumeru-$VERSION-arm64.dmg') ? 0 : 1);
   " 2>/dev/null; then
     ok "site: modal regex matches the app's real dmg name (Mitsumeru-$VERSION-arm64.dmg)"
@@ -116,7 +129,7 @@ if [ -n "$MAC_RE" ]; then
     bad "site: modal regex does NOT match Mitsumeru-$VERSION-arm64.dmg — the Recommended row would vanish"
   fi
 else
-  bad "site: could not find MAC_RE in the page — the modal's matching changed shape"
+  bad "site: no macOS arm64 regex literal in the page (looked for ARM_DMG_RE, MAC_ARM_RE, MAC_RE) — the modal's matching changed shape"
 fi
 
 # --- 4. resolve the latest release, the way the page does --------------------
