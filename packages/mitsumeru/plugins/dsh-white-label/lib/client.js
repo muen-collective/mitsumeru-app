@@ -191,6 +191,60 @@ const accentReport = () => {
 // ── brand upload persistence ───────────────────────────────────────────────
 
 let BRAND_SCOPE = null
+let BRAND_SCOPE_OFF = null
+// The durable settings transport is provided by
+// @deepseek-ai/dsh-client-ui-settings, and its NAME is not stable across
+// harness generations: `settingsScope` (0.1.6-alpha.2, acquired with
+// `bind({ namespace })`) became `configForms` (0.1.7-rc.1, acquired with
+// `get(namespace)`). The bound handle is otherwise the same object -
+// getSnapshot / set / unset / subscribe - so one resolver serves both cores,
+// and neither name may appear in `inject`. See the inject declaration below.
+// The namespace NAME differs by generation, and getting it wrong is silent.
+// On 0.1.7+ a plugin's namespace is its PROFILE ENTRY ID — `white-label`, the id
+// the insert in cordis.patch.yml gives us, declared as volatile Config in
+// lib/index.js. On 0.1.6 it is a name the Host half registers for itself, which
+// is `white-label-brand`. Asking rc-1 for the 0.1.6 name requests a namespace
+// nothing serves: the form reports `status: 'unavailable'`, no error reaches the
+// user, and the brand degrades to the localStorage mirror that a restart wipes.
+// Measured 2026-09-24.
+const BRAND_SCOPE_ENTRY = "white-label"
+const BRAND_SCOPE_NAMESPACE = "white-label-brand"
+
+function bindBrandScope(service, legacy) {
+  const namespace = legacy ? BRAND_SCOPE_NAMESPACE : BRAND_SCOPE_ENTRY
+  let bound = null
+  try {
+    if (legacy) {
+      bound = service && typeof service.bind === "function" ? service.bind({ namespace }) : null
+    } else {
+      bound = service && typeof service.get === "function" ? service.get(namespace) : null
+    }
+  } catch { bound = null }
+  if (!bound) return null
+  BRAND_SCOPE = bound
+  attachBrandScope()
+  return bound
+}
+
+// The transport arrives AFTER apply() on every generation, so its arrival - not
+// apply() - is what publishes the durable document to the rest of the plugin.
+// One subscription serves every listener (see subscribeBrand), and the re-read
+// plus re-notify is what lets the seat claim and the Settings rows see an
+// uploaded brand on the first boot that has one.
+function attachBrandScope() {
+  if (typeof BRAND_SCOPE_OFF === "function") { try { BRAND_SCOPE_OFF() } catch {} }
+  BRAND_SCOPE_OFF = null
+  if (BRAND_SCOPE && typeof BRAND_SCOPE.subscribe === "function") {
+    try {
+      BRAND_SCOPE_OFF = BRAND_SCOPE.subscribe(() => {
+        brandValue = readBrandPersisted()
+        for (const fn of [...brandListeners]) fn()
+      })
+    } catch { BRAND_SCOPE_OFF = null }
+  }
+  brandValue = readBrandPersisted()
+  for (const fn of [...brandListeners]) fn()
+}
 // The sidebar and the hero are separate surfaces — a 24 px rail mark and a
 // 34 px seat beside the blank-session headline — so each owns its own upload and
 // its own visibility switch. `icon` / `showIcon` are the PRE-SPLIT single-mark
@@ -204,15 +258,25 @@ const BRAND_SEAT_FIELDS = ["sidebarIcon", "heroIcon", "showSidebarIcon", "showHe
 // It is not an image, so it is excluded from the image validation below and gets
 // its own merge rule in readBrandPersisted().
 const BRAND_TAGLINE_FIELD = "brandTagline"
+// The second text field: the run-status label that replaces the harness's
+// shipped "Deep diving…" line while a turn runs. Same shape as the tagline —
+// text, so it is excluded from the image validation and gets the "durable scope
+// wins over the localStorage mirror" merge rule in readBrandPersisted().
+const STATUS_LABEL_FIELD = "statusLabel"
+// The status row renders this beside a clock, so 40 characters is where it
+// starts pushing the row around. Mirrors the Host schema's own cap.
+const MAX_STATUS_LABEL = 40
 let brandValue = {
   logoLight: "", logoDark: "",
   sidebarIcon: "", heroIcon: "",
   showSidebarIcon: true, showHeroIcon: true,
   brandTagline: "",
+  statusLabel: "",
+  accentLight: null, accentDark: null,
 }
 let brandRev = 0
 const brandListeners = new Set()
-const BRAND_FIELDS = ["logoLight", "logoDark", BRAND_TAGLINE_FIELD, ...BRAND_SEAT_FIELDS]
+const BRAND_FIELDS = ["logoLight", "logoDark", BRAND_TAGLINE_FIELD, STATUS_LABEL_FIELD, ...BRAND_SEAT_FIELDS]
 
 function isImageDataUrl(v) {
   return typeof v === "string" && v.startsWith("data:image/") && v.length <= MAX_STORED
@@ -233,6 +297,7 @@ function readBrandPersisted() {
     sidebarIcon: "", heroIcon: "",
     showSidebarIcon: true, showHeroIcon: true,
     brandTagline: "",
+    statusLabel: "",
   }
   let legacyIcon = ""
   let legacyShowIcon = null
@@ -248,8 +313,18 @@ function readBrandPersisted() {
   // copy must not resurrect the old line. An absent key (an older document, or a
   // Host half that has not restarted onto the new schema yet) falls back to the
   // mirror. Same shape as @muen/dsh-brand-swap's tagline merge.
+  //
+  // The status label is the second such field and follows the rule verbatim, so
+  // the two are tracked side by side rather than by a shared generic.
   let scopeTagline = null
   let localTagline = null
+  let scopeStatusLabel = null
+  let localStatusLabel = null
+  // The accent pair rides the same document, so it gets the same treatment as
+  // the tagline: the durable scope wins when it declares the field (a deliberate
+  // clear must not be resurrected by a stale mirror), otherwise the mirror.
+  let scopeAccentLight = null
+  let scopeAccentDark = null
   const absorb = (src) => {
     if (!src || typeof src !== "object") return
     for (const k of ["logoLight", "logoDark", "sidebarIcon", "heroIcon"]) {
@@ -260,6 +335,9 @@ function readBrandPersisted() {
     const hero = readBool(src, "showHeroIcon")
     if (hero !== null) out.showHeroIcon = hero
     if (typeof src.brandTagline === "string") scopeTagline = src.brandTagline
+    if (typeof src[STATUS_LABEL_FIELD] === "string") scopeStatusLabel = src[STATUS_LABEL_FIELD]
+    if (typeof src.accentLight === "string") scopeAccentLight = src.accentLight
+    if (typeof src.accentDark === "string") scopeAccentDark = src.accentDark
     if (isImageDataUrl(src.icon)) legacyIcon = src.icon
     const legacy = readBool(src, "showIcon")
     if (legacy !== null) legacyShowIcon = legacy
@@ -288,6 +366,7 @@ function readBrandPersisted() {
         const hero = readBool(parsed, "showHeroIcon")
         if (hero !== null) out.showHeroIcon = hero
         if (typeof parsed.brandTagline === "string") localTagline = parsed.brandTagline
+        if (typeof parsed[STATUS_LABEL_FIELD] === "string") localStatusLabel = parsed[STATUS_LABEL_FIELD]
         if (isImageDataUrl(parsed.icon)) legacyIcon = pick(legacyIcon, parsed.icon)
         const legacy = readBool(parsed, "showIcon")
         if (legacy !== null) legacyShowIcon = legacy
@@ -306,6 +385,18 @@ function readBrandPersisted() {
   // Durable scope wins when it carries the field; otherwise the mirror; and if
   // neither has ever written one, the shipped headline stays (empty = fallback).
   out.brandTagline = scopeTagline !== null ? scopeTagline : (localTagline || "")
+  out[STATUS_LABEL_FIELD] = scopeStatusLabel !== null ? scopeStatusLabel : (localStatusLabel || "")
+  // Same rule for the accent, with one difference that matters: an EMPTY string
+  // from the durable scope is treated as "not declared" rather than as a clear.
+  // A cleared accent writes "" durably AND nulls the mirror, so both roads lead
+  // to null — while a durable write the Host refused leaves the pick readable in
+  // the mirror instead of silently dropping it.
+  const durableAccent = (fromScope, key) => {
+    if (typeof fromScope === "string" && HEX_RE.test(fromScope)) return fromScope.toLowerCase()
+    return accentStorage.read()[key]
+  }
+  out.accentLight = durableAccent(scopeAccentLight, "light")
+  out.accentDark = durableAccent(scopeAccentDark, "dark")
   return out
 }
 
@@ -334,14 +425,13 @@ function persistBrand(field, value) {
 function subscribeBrand(fn) {
   brandListeners.add(fn)
   let disposed = false
-  const unsub = BRAND_SCOPE && typeof BRAND_SCOPE.subscribe === "function"
-    ? (() => { try { return BRAND_SCOPE.subscribe(() => { brandValue = readBrandPersisted(); for (const f of [...brandListeners]) f() }) } catch { return null } })()
-    : null
+  // The transport subscription belongs to attachBrandScope, which owns exactly
+  // one for the whole plugin; taking one per listener here would multiply the
+  // same refresh by the number of mounted rows.
   return () => {
     if (disposed) return
     disposed = true
     brandListeners.delete(fn)
-    if (typeof unsub === "function") try { unsub() } catch {}
   }
 }
 
@@ -417,6 +507,124 @@ const BRAND_CSS = [
   ".wl-tagline-input:focus{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
 ].join("\n")
 
+// ── status label: replacing the shipped run-status line ────────────────────
+//
+// WHAT IT REPLACES: the conversation's run-status row — the line that reads
+// "Deep diving..." (zh: "深度求索中...") from the moment a turn starts until its
+// first token, and again while tools run and output streams. That copy is a
+// hardcoded entry inside @deepseek-ai/dsh-client-ui-chat (`chat.deepDiving`),
+// rendered by one `role="status"` / `aria-live="polite"` element.
+//
+// WHY THIS IS A DOM PATCH AND NOT A LOCALE REGISTRATION: the Client locale
+// service keeps one dictionary per (namespace, locale) pair and REFUSES a second
+// registration — `locale namespace "chat" already has locale "en"` — and it
+// exposes no override or merge seam. Registering first is not an option either:
+// it would make ui-chat's own registration throw and take the chat view down
+// with it. The upstream extension point that would carry a status label has not
+// landed in 0.1.6-alpha.2. Rewriting the one text node the row renders is the
+// only route that works today.
+//
+// WHY IT IS SAFE ENOUGH TO SHIP: the matcher takes only elements carrying both
+// `role="status"` and `aria-live="polite"` AND currently holding the shipped
+// copy, every write is idempotent, and the observer does not run at all while no
+// label is set. A status row owned by another plugin, a row holding unexpected
+// text, and a brand that sets no label are all left exactly as they render.
+const SHIPPED_STATUS_TEXTS = new Set([
+  "Deep diving...",
+  "\u6df1\u5ea6\u6c42\u7d22\u4e2d...",
+])
+const STATUS_ROW_SELECTOR = '[role="status"][aria-live="polite"]'
+
+// The label we wrote into a row, and the shipped copy it displaced. WeakMaps, so
+// a row React discards does not keep anything alive.
+const statusWrittenText = new WeakMap()
+const statusShippedText = new WeakMap()
+
+function statusLabelWanted() {
+  const v = brandValue && brandValue[STATUS_LABEL_FIELD]
+  return typeof v === "string" ? v.trim() : ""
+}
+
+// Patch one status row. Idempotent, and reversible: with the label cleared, a row
+// we wrote gets the shipped copy back rather than keeping the old label frozen.
+function syncStatusRow(row) {
+  const text = row.firstChild
+  if (!text || text.nodeType !== 3) return
+  const label = statusLabelWanted()
+  const mine = statusWrittenText.get(row)
+  if (label === "") {
+    if (mine !== undefined && text.nodeValue === mine) {
+      text.nodeValue = statusShippedText.get(row) ?? text.nodeValue
+      statusWrittenText.delete(row)
+    }
+    return
+  }
+  if (text.nodeValue === label) return
+  // Ours (an earlier label), or the shipped copy on a fresh row. Anything else
+  // belongs to somebody else and is left alone.
+  if (SHIPPED_STATUS_TEXTS.has(text.nodeValue) || text.nodeValue === mine) {
+    if (mine === undefined) statusShippedText.set(row, text.nodeValue)
+    statusWrittenText.set(row, label)
+    text.nodeValue = label
+  }
+}
+
+function syncStatusRows(root) {
+  if (!root || typeof root.querySelectorAll !== "function") return
+  for (const row of root.querySelectorAll(STATUS_ROW_SELECTOR)) syncStatusRow(row)
+}
+
+let statusObserver = null
+
+/**
+ * Install, re-run, or stand down the status-label patch. Called once from apply()
+ * and again on every brand change, so a saved label reaches a row that is already
+ * on screen and a cleared one puts the shipped copy back.
+ */
+function applyStatusLabel() {
+  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return
+  if (!document.body) return
+  if (statusLabelWanted() === "") {
+    // No label: undo anything we wrote and stop watching. A brand that never sets
+    // one pays nothing for this feature.
+    if (statusObserver !== null) statusObserver.disconnect()
+    statusObserver = null
+    syncStatusRows(document)
+    return
+  }
+  if (statusObserver === null) {
+    // The row exists only while a turn runs and apply() runs at boot, so a
+    // one-shot query at apply time finds nothing. The observer is what catches
+    // the row when it mounts, and again on a re-render, which can replace the
+    // text node with the shipped copy.
+    statusObserver = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === "characterData") {
+          const row = record.target.parentNode
+          if (row && row.nodeType === 1 && row.matches(STATUS_ROW_SELECTOR)) syncStatusRow(row)
+          continue
+        }
+        for (const node of record.addedNodes) {
+          if (node.nodeType === 1) {
+            if (node.matches(STATUS_ROW_SELECTOR)) syncStatusRow(node)
+            syncStatusRows(node)
+          } else if (node.nodeType === 3 && node.parentNode && node.parentNode.nodeType === 1 &&
+            node.parentNode.matches(STATUS_ROW_SELECTOR)) {
+            syncStatusRow(node.parentNode)
+          }
+        }
+      }
+    })
+    try {
+      statusObserver.observe(document.body, { childList: true, subtree: true, characterData: true })
+    } catch {
+      statusObserver = null
+      return
+    }
+  }
+  syncStatusRows(document)
+}
+
 // ── locale ─────────────────────────────────────────────────────────────────
 
 const DICT = {
@@ -454,6 +662,9 @@ const DICT = {
     "upload.taglinePlaceholder": "Into the Unknown",
     "upload.taglineHint": "Replaces the blank-session headline above the composer. Leave empty to keep the default.",
     "upload.taglineNoSeam": "Saved, but this harness renders no hero tagline seat \u2014 the headline stays as shipped.",
+    "upload.statusLabel": "Status label",
+    "upload.statusLabelPlaceholder": "Deep diving\u2026",
+    "upload.statusLabelHint": "Replaces the status line shown in the conversation while a turn is running. Leave empty to keep the default.",
     "upload.saved": "Saved \u2014 your brand is live now.",
     "upload.saveBtn": "Save brand",
     "upload.revertBtn": "Revert",
@@ -497,6 +708,9 @@ const DICT = {
     "upload.taglinePlaceholder": "\u63a2\u7d22\u672a\u81f3\u4e4b\u5883",
     "upload.taglineHint": "\u66ff\u6362\u8f93\u5165\u6846\u4e0a\u65b9\u7a7a\u767d\u4f1a\u8bdd\u7684\u4e3b\u6807\u9898\u3002\u7559\u7a7a\u5219\u4fdd\u6301\u9ed8\u8ba4\u6587\u6848\u3002",
     "upload.taglineNoSeam": "\u5df2\u4fdd\u5b58\uff0c\u4f46\u5f53\u524d\u8fd0\u884c\u73af\u5883\u6ca1\u6709\u4e3b\u6807\u9898\u6807\u8bed\u5ea7\u4f4d\uff0c\u6807\u9898\u5c06\u4fdd\u6301\u9ed8\u8ba4\u6587\u6848\u3002",
+    "upload.statusLabel": "\u8fd0\u884c\u72b6\u6001\u6587\u6848",
+    "upload.statusLabelPlaceholder": "\u6df1\u5ea6\u6c42\u7d22\u4e2d\u2026",
+    "upload.statusLabelHint": "\u66ff\u6362\u5bf9\u8bdd\u6267\u884c\u671f\u95f4\u663e\u793a\u7684\u72b6\u6001\u6587\u6848\u3002\u7559\u7a7a\u5219\u4fdd\u6301\u9ed8\u8ba4\u6587\u6848\u3002",
     "upload.saved": "\u5df2\u4fdd\u5b58\u2014\u2014\u54c1\u724c\u5df2\u751f\u6548\u3002",
     "upload.saveBtn": "\u4fdd\u5b58\u54c1\u724c",
     "upload.revertBtn": "\u8fd8\u539f",
@@ -516,7 +730,26 @@ function activeLang() {
   } catch { return "en" }
 }
 
+// Bound in apply() to `settings.white-label` on the locale service.
+//
+// The local DICT below is not a translation source — it is a render-before-apply
+// safety net. Every word this plugin shows must resolve through the locale
+// service, because that is the only place the language pack
+// (@muen/dsh-muen-locales, and the dsh-multi-lang-ui carrier) can reach. Reading
+// `documentElement.lang` here instead meant the Brand page ignored the picker
+// entirely: it showed English, or Chinese whenever that attribute still read
+// `zh*`. Measured 2026-09-20 — the owner's `en` dictionary was clean, the pack
+// held all 44 keys in ko/ja/fr/de/es, and the page still rendered zh.
+let WL_TRANSLATE = null
+
 function translate(key) {
+  try {
+    if (typeof WL_TRANSLATE === "function") {
+      const out = WL_TRANSLATE(key)
+      // The service returns the key itself when nothing in the chain has it.
+      if (typeof out === "string" && out.length > 0 && out !== key) return out
+    }
+  } catch { /* fall through to the local table */ }
   const dict = DICT[activeLang()] || DICT.en
   return dict[key] || DICT.en[key] || key
 }
@@ -895,6 +1128,18 @@ window.__ModuleLoader__.load({
           }),
           react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.taglineHint") })
         ] }),
+        // Status label — the line the conversation shows while a turn runs. Same
+        // durable namespace, same Save button; empty keeps the shipped copy.
+        react_jsx_runtime.jsx("div", { className: "wl-brand-card", children: [
+          react_jsx_runtime.jsx("div", { className: "wl-logo-cell-label", children: translate("upload.statusLabel") }),
+          react_jsx_runtime.jsx("input", {
+            type: "text", className: "wl-tagline-input", maxLength: MAX_STATUS_LABEL,
+            value: draft[STATUS_LABEL_FIELD] || "",
+            placeholder: translate("upload.statusLabelPlaceholder"),
+            onChange: (e) => setField(STATUS_LABEL_FIELD, e.target.value)
+          }),
+          react_jsx_runtime.jsx("p", { className: "wl-brand-hint", children: translate("upload.statusLabelHint") })
+        ] }),
         react_jsx_runtime.jsx("div", { className: "wl-brand-actions", children: [
           react_jsx_runtime.jsx("button", {
             className: "wl-brand-btn wl-brand-btn--primary", disabled: !dirty || saving, onClick: save,
@@ -1042,18 +1287,25 @@ window.__ModuleLoader__.load({
 
     // ── apply ─────────────────────────────────────────────────────────────
 
-    // `settingsScope` is the settings transport (provided by
-    // @deepseek-ai/dsh-client-ui-settings) and is what makes an uploaded brand
-    // DURABLE. It must be DECLARED here: without it apply() can run before the
-    // service exists, `ctx.get("settingsScope")` returns undefined, and every
-    // upload silently degrades to the localStorage mirror — which a restart
-    // wipes, because the harness serves a fresh random port each launch and
-    // localStorage is origin-scoped. That is the whole "logo is gone when I
-    // restart" report. dsh-client-ui-theme declares ["slots","locale","remote",
-    // "settingsScope"] for exactly this reason; `remote` is not needed here
-    // because SettingsScopeBinder binds the providing fiber for writes.
-    // Measured 2026-09-16.
-    const inject = ["slots", "locale", "theme", "settingsScope"]
+    // The durable settings transport is provided by
+    // @deepseek-ai/dsh-client-ui-settings and is what makes an uploaded brand
+    // survive a restart. Its NAME is not stable across harness generations:
+    // `settingsScope` (0.1.6-alpha.2, acquired with `bind({ namespace })`)
+    // became `configForms` (0.1.7-rc.1, acquired with `get(namespace)`).
+    // Measured 2026-09-24 against both cores.
+    //
+    // It must NOT be declared here. cordis keeps an entry `pending` forever when
+    // a declared service never appears, which costs the whole Brand surface and
+    // not just the upload: on the 0.1.7 core the entry reported "did not
+    // activate (waiting for service: settingsScope)" and every Brand row, seat
+    // mark and tagline field went with it. So `inject` lists only what is stable
+    // and bindBrandScope resolves the transport at runtime, falling back to the
+    // localStorage mirror on a core that provides neither name.
+    //
+    // That fallback is not durable: the harness serves a fresh random port each
+    // launch and localStorage is origin-scoped, so a restart wipes it - the
+    // whole "logo is gone when I restart" report. Measured 2026-09-16.
+    const inject = ["slots", "locale", "theme"]
 
     function apply(ctx) {
       // Inject brand CSS
@@ -1074,16 +1326,53 @@ window.__ModuleLoader__.load({
         if (locale && typeof locale.register === "function") {
           locale.register(WL_NS, DICT)
         }
+        // …and read every string back through the service, so a language pack's
+        // dictionary wins over this plugin's own {en, zh} table.
+        if (locale && typeof locale.bind === "function") {
+          WL_TRANSLATE = locale.bind(WL_NS)
+        }
       } catch {}
 
-      // Bind brand upload persistence
-      try {
-        const scopeService = typeof ctx.get === "function" ? ctx.get("settingsScope") : undefined
-        BRAND_SCOPE = scopeService && typeof scopeService.bind === "function"
-          ? scopeService.bind({ namespace: "white-label-brand" })
-          : null
-      } catch { BRAND_SCOPE = null }
+      // Bind brand upload persistence against whichever settings transport this
+      // core provides. Both generations deliver it AFTER apply(), so the inject
+      // callbacks are the normal path and the two probes only catch a core that
+      // had the service mounted already.
+      bindBrandScope(typeof ctx.get === "function" ? ctx.get("configForms") : undefined, false)
+      if (!BRAND_SCOPE) bindBrandScope(typeof ctx.get === "function" ? ctx.get("settingsScope") : undefined, true)
+      if (typeof ctx.inject === "function") {
+        try {
+          ctx.inject(["configForms"], (serviceCtx) => {
+            if (!BRAND_SCOPE) bindBrandScope(serviceCtx.get("configForms"), false)
+          })
+        } catch {}
+        try {
+          ctx.inject(["settingsScope"], (serviceCtx) => {
+            if (!BRAND_SCOPE) bindBrandScope(serviceCtx.get("settingsScope"), true)
+          })
+        } catch {}
+      }
       brandValue = readBrandPersisted()
+      // A rebind replaces the transport subscription; an unload must not leave
+      // the last one live.
+      try {
+        if (typeof ctx.effect === "function") {
+          ctx.effect(() => () => {
+            if (typeof BRAND_SCOPE_OFF === "function") { try { BRAND_SCOPE_OFF() } catch {} }
+            BRAND_SCOPE_OFF = null
+          })
+        }
+      } catch {}
+
+      // Status label: the conversation's shipped "Deep diving…" line, replaced by
+      // the brand's own copy when one is set. Both calls matter — the first
+      // applies a label the document already carries, the second reaches a row
+      // that is already on screen when the label changes (the row is mounted only
+      // while a turn runs, so it cannot be found at apply time).
+      applyStatusLabel()
+      const stopStatusLabel = subscribeBrand(() => applyStatusLabel())
+      try {
+        if (typeof ctx.effect === "function") ctx.effect(() => stopStatusLabel)
+      } catch {}
 
       // ── accent row (order 10.5) ─────────────────────────────────────────
       const accentStore = store.defineStore({
@@ -1097,14 +1386,30 @@ window.__ModuleLoader__.load({
       })
       let bound
       let revision = 0
+      // The accent reads from the brand document first and the mirror second, so
+      // a SHIPPED accent (declared in the plugin's own bundle patch) renders on a
+      // fresh install with nothing in localStorage — and a picked colour outranks
+      // it through the profile layer. accentStorage stays as the write-through
+      // mirror and the only source on a core whose settings service is absent.
+      const readAccent = () => ({
+        light: brandValue.accentLight ?? accentStorage.read().light,
+        dark: brandValue.accentDark ?? accentStorage.read().dark
+      })
       const syncAccent = () => {
-        accentCurrent = accentStorage.read()
+        accentCurrent = readAccent()
         bound?.sync(accentCurrent.light, accentCurrent.dark, ++revision)
         applyAccent(ctx)
       }
 
-      accentCurrent = accentStorage.read()
-      applyAccent(ctx)
+      syncAccent()
+
+      // The accent can arrive AFTER apply(): the durable document is delivered by
+      // the settings transport, so a shipped accent must be picked up when it
+      // lands, not only at boot. syncAccent() is idempotent and revision-guarded.
+      const stopAccentBrand = subscribeBrand(() => syncAccent())
+      try {
+        if (typeof ctx.effect === "function") ctx.effect(() => stopAccentBrand)
+      } catch {}
 
       // ── brand service + store (must be set up before the inject) ───────
       let brandService = null
@@ -1166,11 +1471,18 @@ window.__ModuleLoader__.load({
             return {
               setAccent: (scheme, hex) => {
                 if (!HEX_RE.test(hex)) return
-                accentStorage.write(scheme === "light" ? "light" : "dark", hex.toLowerCase())
+                const key = scheme === "light" ? "light" : "dark"
+                // Mirror first (cheap, and the only store on a bare core), then
+                // the durable document — same order as the brand fields, so a
+                // relaunch reads back what the Host actually accepted.
+                accentStorage.write(key, hex.toLowerCase())
+                persistBrand(key === "light" ? "accentLight" : "accentDark", hex.toLowerCase())
                 syncAccent()
               },
               clearAccent: (scheme) => {
-                accentStorage.write(scheme === "light" ? "light" : "dark", null)
+                const key = scheme === "light" ? "light" : "dark"
+                accentStorage.write(key, null)
+                persistBrand(key === "light" ? "accentLight" : "accentDark", "")
                 syncAccent()
               }
             }
@@ -1207,6 +1519,10 @@ window.__ModuleLoader__.load({
             name: "settings.section",
             id: "white-label-brand-upload",
             order: 15,
+            // Without this the page body keeps the language it was first
+            // rendered in — the nav label is a thunk and re-reads, the page is
+            // not. Same declaration the accent/brand rows above already carry.
+            locale: WL_NS,
             label: () => translate("upload.title"),
           }, BrandUploadPage)
         )
@@ -1263,6 +1579,19 @@ window.__ModuleLoader__.load({
       }
       registerBrandSeatsIfBranded = registerBrandSeats
       registerBrandSeats()
+      // The durable brand document is NOT ready when apply() runs. `settingsScope`
+      // exists (it is an inject dependency) but its host value lands later, so the
+      // single read in brandSeatsWanted() sees an empty document and the seats stay
+      // unclaimed — the sidebar and the hero keep the shipped product mark while
+      // Settings → General → Brand still shows the saved logos. Measured
+      // 2026-09-20 on a fresh boot: both seats had zero occupants.
+      //
+      // So re-decide whenever the brand store changes. The registration is
+      // idempotent, and this is the same hook the filesystem brand already uses.
+      const stopSeatClaim = subscribeBrand(() => registerBrandSeats())
+      try {
+        if (typeof ctx.effect === "function") ctx.effect(() => stopSeatClaim)
+      } catch {}
 
       window[MARKER] = {
         mounted: true,
@@ -1270,6 +1599,8 @@ window.__ModuleLoader__.load({
         accentOrder: 10.5,
         brandOrder: 20,
         taglineField: BRAND_TAGLINE_FIELD,
+        statusLabelField: STATUS_LABEL_FIELD,
+        statusRowSelector: STATUS_ROW_SELECTOR,
         at: new Date().toISOString()
       }
     }

@@ -253,6 +253,11 @@ const BRAND_SETTINGS_NAMESPACE = 'white-label-brand'
 // Not a layout cure (the hero row wraps) — a bound on what the settings document
 // holds, matching the client field's maxLength.
 const MAX_TAGLINE = 200
+// Status-label bound. The label replaces the harness's shipped run-status line
+// ("Deep diving…") while a turn runs. That line sits in one row beside a clock,
+// so 40 characters is where it starts pushing the row around; the client field
+// carries the same cap.
+const MAX_STATUS_LABEL = 40
 // The brand document. Each seat owns its own mark and its own switch: the
 // sidebar rail (24 px) and the hero seat (34 px) are separate surfaces, so one
 // upload no longer feeds both. `icon` / `showIcon` are the pre-split single-mark
@@ -263,6 +268,13 @@ const MAX_TAGLINE = 200
 // headline ("Into the Unknown") through the `conversation.hero.tagline` seam
 // added by patches/patch-hero-brand-tagline.mjs. Empty keeps the
 // upstream copy, so a brand that never touches it renders exactly as shipped.
+//
+// `statusLabel` is the second text field: it replaces the shipped run-status
+// line ("Deep diving…") the conversation shows while a turn runs. Empty keeps
+// the shipped copy. It needs no Host behaviour — the client half owns the
+// replacement — but it has to be declared HERE, because the settings scope
+// resolves only namespaces the Host registers and a field the schema does not
+// declare is dropped rather than stored.
 const BRAND_SETTINGS_BASE = {
   logoLight: '',
   logoDark: '',
@@ -271,6 +283,7 @@ const BRAND_SETTINGS_BASE = {
   showSidebarIcon: true,
   showHeroIcon: true,
   brandTagline: '',
+  statusLabel: '',
   icon: '',
   showIcon: true,
 }
@@ -282,9 +295,61 @@ const BRAND_SETTINGS_SCHEMA = z.object({
   showSidebarIcon: z.boolean().default(true),
   showHeroIcon: z.boolean().default(true),
   brandTagline: z.string().max(MAX_TAGLINE).default(''),
+  statusLabel: z.string().max(MAX_STATUS_LABEL).default(''),
   icon: z.string().default(''),
   showIcon: z.boolean().default(true),
+  accentLight: z.string().default(''),
+  accentDark: z.string().default(''),
 })
+
+// ── the durable namespace: this plugin's own profile entry id ──────────────
+// This Config is THE mechanism a deployment ships a brand with, and the reason
+// the plugin declares one at all.
+//
+// Measured 2026-09-24 against @deepseek-ai/dsh@0.1.7-rc.1: the settings service
+// exposes configure / describe / update / replace / mutate and NOTHING else. The
+// `settings.register(namespace, schema, { base })` call the 0.1.6 generation
+// accepted is GONE, so the call in apply() below throws `register is not a
+// function` into the catch that existed to tolerate a taken namespace —
+// silently. The namespace then never resolves, the client's
+// `configForms.get('white-label-brand')` reports `status: 'unavailable'`, and
+// persistence degrades to the browser-localStorage mirror. That mirror is NOT
+// durable: the harness serves a fresh random port on every launch and
+// localStorage is origin-scoped, so the next start wipes it. That is the whole
+// "the brand is gone again" report, and why reinstalling lost it.
+//
+// 0.1.7 replaced that API with a better one: a plugin's Config IS its namespace,
+// keyed by the plugin's PROFILE ENTRY ID (`white-label`, per the insert in
+// cordis.patch.yml), and the settings service treats an entry as configurable
+// exactly when its Config carries `volatile()` fields. Values persist through
+// the active profile's patch document, and the patch LAYER ORDER is what makes
+// this shippable: bundle layers, then the profile's cordis.patch.yml, then
+// $DSH_HOME/cordis.patch.yml (dsh-app-boot's readProfilePatches). So a brand
+// carried in this plugin's own bundle patch travels WITH THE BUILD, while any
+// edit a user saves outranks it in the profile layer and survives an update.
+//
+// `accentLight`/`accentDark` ride the same namespace: the accent is part of the
+// brand, and leaving it in localStorage alone reproduced the same loss.
+//
+// Both generations are served — this Config is what 0.1.7+ reads, and the
+// legacy register call in apply() is kept for a 0.1.6 core, where the namespace
+// is one the plugin registers for itself rather than its entry id.
+const BRAND_CONFIG_SCHEMA = z.object({
+  logoLight: z.string().default('').volatile(),
+  logoDark: z.string().default('').volatile(),
+  sidebarIcon: z.string().default('').volatile(),
+  heroIcon: z.string().default('').volatile(),
+  showSidebarIcon: z.boolean().default(true).volatile(),
+  showHeroIcon: z.boolean().default(true).volatile(),
+  brandTagline: z.string().max(MAX_TAGLINE).default('').volatile(),
+  statusLabel: z.string().max(MAX_STATUS_LABEL).default('').volatile(),
+  icon: z.string().default('').volatile(),
+  showIcon: z.boolean().default(true).volatile(),
+  accentLight: z.string().default('').volatile(),
+  accentDark: z.string().default('').volatile(),
+})
+/** Live brand preferences; the browser consumes the configuration form projection. */
+const Config = BRAND_CONFIG_SCHEMA
 
 // ── cordis apply ───────────────────────────────────────────────────────────
 
@@ -315,14 +380,36 @@ function apply(ctx) {
   // composition with no settings provider keeps working exactly as composed.
   try {
     ctx.inject(['settings'], (settingsCtx) => {
-      try {
+      // This plugin ships its OWN page (Settings → Brand), and dsh-settings
+      // auto-generates a page from any schema carrying volatile fields unless the
+      // plugin says otherwise — `auto` defaults to true. Without this call the
+      // brand would appear on a second, generated page as well as ours. The rule
+      // is the one in dsh-settings' README: a plugin with its own page registers
+      // `configure({ auto: false }, ctx.fiber)` as an effect inside the optional
+      // settings child, and the `ctx.fiber` here is what binds the policy to THIS
+      // plugin instance. The policy does not affect reads or writes.
+      //
+      // The effect matters: it re-runs when a late-loading or replaced Settings
+      // service appears, so the policy cannot be lost to plugin order.
+      //
+      // Capability-guarded like the register call below, because this plugin still
+      // ships to a 0.1.6 core whose settings service predates both `configure`
+      // (only `register` existed) and the generated-page feature it opts out of.
+      if (typeof settingsCtx.settings?.configure === 'function') {
+        settingsCtx.effect(() => settingsCtx.settings.configure({ auto: false }, ctx.fiber))
+      }
+
+      // Register the brand namespace for a 0.1.6 core, where a plugin's durable
+      // namespace is one it registers for itself. On 0.1.7+ there is no
+      // `register` and no need for one — the Config above IS the namespace,
+      // keyed by this plugin's entry id — so the optional call is skipped rather
+      // than allowed to throw. See BRAND_CONFIG_SCHEMA for the measurement.
+      if (typeof settingsCtx.settings?.register === 'function') {
         settingsCtx.settings.register(
           BRAND_SETTINGS_NAMESPACE,
           BRAND_SETTINGS_SCHEMA,
           { base: BRAND_SETTINGS_BASE },
         )
-      } catch {
-        // Provider present but the namespace is taken or rejected — keep going.
       }
     })
   } catch {
@@ -330,4 +417,5 @@ function apply(ctx) {
   }
 }
 
-export default { name, inject, apply }
+export { Config }
+export default { name, inject, apply, Config }

@@ -1,10 +1,10 @@
 # @muen/dsh-white-label
 
-A **filesystem-based white-label brand plugin** for DeepSeek Harness. Reads brand files (an `icon.*` mark and a `logo.*` lockup) from `<DSH_HOME>/brand/` and exposes them through a cordis service — no shell bridge, no `mitsumeru:*` preload needed. It also owns the Settings → Brand page and the durable `white-label-brand` settings namespace behind it.
+A **filesystem-based white-label brand plugin** for DeepSeek Harness. Reads brand files (an `icon.*` mark and a `logo.*` lockup) from `<DSH_HOME>/brand/` and exposes them through a cordis service — no shell bridge, no `mitsumeru:*` preload needed. It also owns the Settings → Brand page and the durable `white-label-brand` settings namespace behind it: the two seat marks, the hero tagline, the accent colour, and the run-status label.
 
 ## How it works
 
-The host half reads and validates brand files from the profile's brand folder, and owns the durable settings namespace (the uploaded logos, the two seat marks with their switches, and the hero tagline). The browser half consumes both to render brand marks in the sidebar and hero — two separate seats, each configured on its own — and to render the hero tagline.
+The host half reads and validates brand files from the profile's brand folder, and owns the durable settings namespace (the uploaded logos, the two seat marks with their switches, the hero tagline, and the run-status label). The browser half consumes both to render brand marks in the sidebar and hero — two separate seats, each configured on its own — to render the hero tagline, and to replace the conversation's run-status line.
 
 ## Settings → Brand
 
@@ -17,6 +17,7 @@ The **sidebar** (a 24 px rail mark) and the **hero** (a 34 px mark beside the bl
 | Show icon in hero + Hero icon | the hero-seat mark and its own visibility switch (34 px) |
 | Accent — light / dark | the brand accent colour for each mode |
 | Hero tagline | the copy on a blank session, above the composer (see below) |
+| Status label | the line the conversation shows while a turn runs (see below) |
 
 Each seat falls back to the brand folder's `icon.*` when no upload is set, so a filesystem-only brand keeps working with no settings at all. Before the split, one uploaded icon fed both seats under a single switch; that legacy mark is still read, and the first save on the Brand page materializes both seats and clears it.
 
@@ -52,6 +53,14 @@ The headline has no slot of its own, and a plugin cannot declare one — slot na
 
 The seam is two edits, not one: the `renderSlot("conversation.hero.tagline", …)` call in `HeroShell` **and** the seat's declaration in the `conversation.content` factory's `children` table. A call without the declaration throws `SlotOwnershipError` during render and unmounts the whole blank-session view — hero and composer. `scripts/verify-hero-tagline.mjs` fails on that shape, and `prepare-harness.sh` runs it as a build gate.
 
+## Run-status label
+
+One text field — **Settings → Brand → Status label** — replaces the line the conversation shows while a turn runs. DSH ships that line as `chat.deepDiving`: **"Deep diving..."** in English, **"深度求索中..."** in Chinese. The label is persisted as `statusLabel` in the same durable `white-label-brand` namespace, capped at 40 characters, and **empty keeps the shipped copy**.
+
+Unlike the tagline, this one has no seam to use and none to add. The copy is a dictionary entry inside `@deepseek-ai/dsh-client-ui-chat`, and the Client locale service keeps one dictionary per `(namespace, locale)` pair: a second `locale.register("chat", "en", …)` throws `locale namespace "chat" already has locale "en"`, and registering *first* is worse — it makes ui-chat's own registration throw and takes the chat view down with it. So the plugin rewrites the one text node the status row renders, under a deliberately narrow matcher: an element carrying **both** `role="status"` and `aria-live="polite"` whose first child still holds the shipped copy. Another plugin's status row, a row holding text we did not write, and a brand with no label set are left exactly as they render — and while no label is set, no observer runs at all.
+
+This is the same route the community plugin `alingalingling/ui-status-label` takes, and it retires the moment DSH exposes a status extension point of its own. `tests/white-label-status-label.test.mjs` pins the three behaviours that matter: the shipped copy is replaced in both languages, a foreign row is untouched, and clearing the label restores the shipped copy and stands the observer down.
+
 ## Install
 
 ```bash
@@ -72,6 +81,7 @@ dsh plugin --profile mitsu add ./plugins/dsh-white-label
 | Brand source | `<DSH_HOME>/brand/` **and** uploads in Settings → Brand | uploads in Settings → Brand |
 | Storage | `white-label-brand` settings namespace + the filesystem | its own cordis settings doc |
 | Hero tagline | yes | yes |
+| Status label | yes | no |
 | Accent picker | Yes (per-mode light/dark) | No |
 | Use case | the brand a Mitsumeru deployment ships | per-profile identity on a stock harness |
 

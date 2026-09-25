@@ -165,27 +165,32 @@ app.whenReady().then(async () => {
   // should be set if the user has an accent saved, or absent if they don't).
   // Both are fine — what must NOT happen is the old theme values still being there
   // after a harness replacement.
+  //
+  // Read the token from BODY, not documentElement. The plugin applies the accent
+  // through its theme service, which writes the override onto <body>; asking
+  // documentElement returns '' even when the accent is live, and this probe did
+  // exactly that until 2026-09-24 — which read as "no accent" on a build whose
+  // accent was applied. A false negative here is expensive: the accent is the one
+  // part of the brand a screenshot cannot confirm.
   const accent = await win.webContents.executeJavaScript(
     `(() => {
-       const root = document.documentElement;
-       const styles = getComputedStyle(root);
-       const brand = styles.getPropertyValue('--dsw-alias-brand-primary').trim();
-       const marker = window.__WHITE_LABEL__;
+       const read = (el, name) => (getComputedStyle(el).getPropertyValue(name) || '').trim();
        return {
-         brandPrimary: brand || '(default)',
-         accentLight: marker?.accentLight || null,
-         accentDark: marker?.accentDark || null
+         brandPrimary: read(document.body, '--dsw-alias-brand-primary') || '(default)',
+         hover: read(document.body, '--dsw-alias-button-primary-hover') || '(default)'
        };
      })()`
   )
   console.log('[wl-probe] --dsw-alias-brand-primary:', accent.brandPrimary)
-  console.log('[wl-probe] accent light (marker):', accent.accentLight || '(none)')
-  console.log('[wl-probe] accent dark  (marker):', accent.accentDark || '(none)')
+  console.log('[wl-probe] --dsw-alias-button-primary-hover:', accent.hover)
 
   if (BRAND_DIR_ARG) {
     console.log('[wl-probe] expected brand dir:', BRAND_DIR_ARG)
   }
 
+  // The marker carries no accent values by design (it reports mount facts), so
+  // the token read above is the only signal — and with no accent configured it
+  // legitimately reads as the theme default, which is not a failure.
   console.log('[wl-probe] PASS: white-label plugin mounted, accent + brand rows render, brand path visible')
   app.exit(0)
 })

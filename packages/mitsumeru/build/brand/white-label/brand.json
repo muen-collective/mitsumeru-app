@@ -1,0 +1,43 @@
+{
+  "_": [
+    "The brand THIS BUILD ships, for Settings -> Brand.",
+    "",
+    "Edit values here, not in code: scripts/apply-white-label-brand.mjs reads this",
+    "file plus the PNGs beside it and writes the result into the vendored",
+    "@muen/dsh-white-label's cordis.patch.yml during the build. That patch is a",
+    "BUNDLE layer, so this brand travels with the app -- and it is a DEFAULT, not a",
+    "lock. The profile's own cordis.patch.yml outranks it (see the layer order in",
+    "dsh-app-boot's readProfilePatches), so a brand saved on Settings -> Brand",
+    "persists across app updates.",
+    "",
+    "One caveat that bites hand-editing rather than the UI: a profile row REPLACES",
+    "the whole config object instead of merging field by field, so a row that sets",
+    "only brandTagline drops the shipped marks. The Settings UI is not affected --",
+    "it writes the full resolved config, and Reset deletes the row and brings these",
+    "values back.",
+    "",
+    "Delete this folder and the build ships the plugin's neutral defaults instead.",
+    "",
+    "Text values were taken from the authored settings document on 2026-09-24.",
+    "Empty means: keep the shipped copy (tagline/statusLabel) or leave unset",
+    "(accent/logo)."
+  ],
+
+  "brandTagline": "The liberation begins here.",
+  "statusLabel": "Staring intently\u2026",
+  "accentLight": "#4f83f2",
+
+  "_files": [
+    "Field -> file in this folder. `icon.png` is a 24x24 mark that fills BOTH seats;",
+    "the logos are the sidebar wordmark and are theme-switched, so the pair matters:",
+    "the light-theme wordmark is dark ink and the dark-theme one is light ink.",
+    "A raster does not invert with the theme, which is why a single file cannot",
+    "serve both and both are shipped."
+  ],
+  "files": {
+    "sidebarIcon": "icon.png",
+    "heroIcon": "icon.png",
+    "logoLight": "logo-light.png",
+    "logoDark": "logo-dark.png"
+  }
+}

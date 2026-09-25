@@ -224,6 +224,15 @@ for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdo
   echo "harness resource: vendored @muen/$pkg"
 done
 
+# The brand this BUILD ships. Written into the vendored white-label plugin's own
+# bundle patch, so it travels with the app and still loses to anything saved in
+# the profile layer — see the script's header for the layer order that makes
+# that true, and build/brand/white-label/brand.json to change the values.
+#
+# After the vendoring loop, deliberately: it edits the vendored copy, and the
+# copy it edits must be the fresh one.
+node scripts/apply-white-label-brand.mjs "$(pwd)"
+
 links=$(find "$OUT" -type l | wc -l | tr -d ' ')
 files=$(find "$OUT" -type f | wc -l | tr -d ' ')
 echo "harness resource: $OUT — @deepseek-ai/dsh@$VERSION, $files files, $links symlinks"
