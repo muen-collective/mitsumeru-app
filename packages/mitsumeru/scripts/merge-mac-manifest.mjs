@@ -40,7 +40,7 @@ for (const arch of ORDER) {
   // Each entry is the three-line triplet the builder writes, in order.
   const re = /^\s*-\s*url:\s*(\S+)\s*\n\s*sha512:\s*(\S+)\s*\n\s*size:\s*(\d+)\s*$/gm;
   for (const match of text.matchAll(re)) {
-    entries.push({ url: match[1], sha512: match[2], size: Number(match[3]) });
+    entries.push({ url: match[1], sha512: match[2], size: Number(match[3]), arch });
   }
 }
 
@@ -49,18 +49,41 @@ if (entries.length === 0) {
   process.exit(1);
 }
 
-const primary = entries[0];
+// A fragment is left over from an EARLIER release when the other arch has not
+// been rebuilt yet, and merging it blindly produces a feed that names one version
+// and ships another arch's older files — measured 2026-09-24: a 0.2.3-dev feed
+// listing the 0.2.2 x64 zip and dmg, which an Intel client would have downloaded
+// as "0.2.3-dev". The version is in the artifact name by convention (the builder
+// names files `<product>-<version>[-<arch>]`), so the fragment's own filenames are
+// what identify it — and a mismatch is dropped, loudly, rather than shipped.
+const wanted = `-${version}`;
+const isCurrent = (url) => url.includes(wanted) || url.includes(`${version}.`) || url.includes(`${version}-`);
+const stale = entries.filter((e) => !isCurrent(e.url));
+if (stale.length > 0) {
+  console.warn(
+    `manifest:merge: DROPPING ${stale.length} stale entr${stale.length === 1 ? "y" : "ies"} from another version — ` +
+      `this feed is ${version}: ${stale.map((e) => e.url).join(", ")}`
+  );
+  console.warn(`manifest:merge: re-run notarize for those arches to include them`);
+}
+const current = entries.filter((e) => isCurrent(e.url));
+if (current.length === 0) {
+  console.error(`[FAIL] manifest:merge found no entries for ${version} — every fragment is from an older build`);
+  process.exit(1);
+}
+
+const primary = current[0];
 const lines = [
   `version: ${version}`,
   "files:",
-  ...entries.flatMap((e) => [`  - url: ${e.url}`, `    sha512: ${e.sha512}`, `    size: ${e.size}`]),
+  ...current.flatMap((e) => [`  - url: ${e.url}`, `    sha512: ${e.sha512}`, `    size: ${e.size}`]),
   `path: ${primary.url}`,
   `sha512: ${primary.sha512}`,
   `releaseDate: '${new Date().toISOString()}'`,
   "",
 ];
 writeFileSync(out, lines.join("\n"));
-console.log(`manifest:merge ${out} — ${entries.length} entries: ${entries.map((e) => e.url).join(", ")}`);
-if (entries.length < 2) {
+console.log(`manifest:merge ${out} — ${current.length} entries: ${current.map((e) => e.url).join(", ")}`);
+if (current.length < 2) {
   console.warn("manifest:merge WARNING: fewer than two artifacts — this feed describes one architecture only");
 }
