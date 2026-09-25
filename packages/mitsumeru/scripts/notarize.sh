@@ -55,8 +55,30 @@ if [ -n "${NOTARY_PROFILE:-}" ]; then
 elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
   AUTH=(--apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
 else
+  # Nothing was NAMED — which is not the same as nothing being stored, and saying
+  # "no credentials" for both cost real time on 2026-09-24: the stored
+  # `asuka-notary` profile was live and working the whole time (notarytool history
+  # showed every release accepted); the failure was only that this run did not name
+  # it. So probe the name this repo STORES under before concluding anything.
+  #
+  # `store-notary-credentials.sh` defaults to `asuka-notary`, and that asymmetry —
+  # store defaults, notarize requires an explicit name — is the trap. `security`
+  # cannot help here: notarytool keeps its item out of reach of a plain keychain
+  # search, while `notarytool history` answers for a named profile. It is a read:
+  # no submission, and no credential is printed.
+  DEFAULT_PROFILE="${NOTARY_PROFILE:-asuka-notary}"
+  if xcrun notarytool history --keychain-profile "$DEFAULT_PROFILE" >/dev/null 2>&1; then
+    {
+      echo "[FAIL] notarization profile was not named — nothing was submitted."
+      echo "  But '$DEFAULT_PROFILE' IS stored in this keychain and works."
+      echo "  Run:  NOTARY_PROFILE=$DEFAULT_PROFILE pnpm notarize:[x64|arm64]"
+    } >&2
+    exit 2
+  fi
+
   cat >&2 <<'MSG'
-[FAIL] no notarization credentials — nothing was submitted.
+[FAIL] no notarization credentials — nothing was submitted, and the keychain holds
+       no stored notarytool profile under the default name.
   Store them once:  pnpm store:credentials
   Then run:         NOTARY_PROFILE=asuka-notary pnpm notarize
   (or export APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID)
