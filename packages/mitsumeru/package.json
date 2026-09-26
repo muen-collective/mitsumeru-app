@@ -1,8 +1,8 @@
 {
   "name": "mitsumeru",
   "productName": "Mitsumeru",
-  "version": "0.2.3-dev",
-  "description": "Mitsumeru — our own Electron shell around a DSH release. Epic 86 Track B.",
+  "version": "0.2.3",
+  "description": "Mitsumeru \u2014 our own Electron shell around a DSH release. Epic 86 Track B.",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
