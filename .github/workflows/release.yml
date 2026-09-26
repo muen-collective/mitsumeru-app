@@ -1,5 +1,21 @@
 # Release build (Epic 86 T9–T12). Builds, signs, notarizes, gates, publishes.
 #
+# WHAT THIS RUNNER CAN AND CANNOT BUILD — read before tagging.
+#
+# It runs `macos-14` and calls `pnpm package:mac`, which packages the host architecture
+# only (arm64). **It cannot build the Intel mac target or the Windows installer.** Every
+# production release so far (0.2.0 through 0.2.3) was therefore built and published
+# LOCALLY with the three-target sequence — `package:mac` (x64 + arm64) →
+# `package:win:x64` → `notarize:all` → `PROMOTE=1 check:label` + `verify:release` +
+# `verify:artifacts` → upload — and this workflow is the **dev/prerelease** path.
+#
+# So a tag on an already-published production release must NOT try to create a release
+# that exists: the publish step below is idempotent (it uploads with --clobber and
+# refreshes the notes from the repository) and it takes the notes from
+# `packages/mitsumeru/release-notes/v<version>.md` rather than generating them, so a
+# tagged release always carries the notes the repo has. When CI grows a Windows job and
+# an Intel mac job, this header and the publish step are what to change together.
+#
 # The feed is GitHub Releases on THIS repository, and the update client resolves
 # its channel from the release tag: `v0.1.0-dev` → channel `dev` → `dev-mac.yml`
 # among that release's assets. The tag is therefore not cosmetic — a `-dev`
@@ -136,24 +152,36 @@ jobs:
           # Release notes carry the -dev label (T11): the same suffix on the
           # artifact, the tag and the notes is what makes "internal build" a
           # property of the release rather than a thing people remember.
-          HARNESS=$(node -p "require('./package.json').dependencies['@deepseek-ai/dsh']")
-          NOTES=$(printf '%s\n' \
-            "Mitsumeru $VERSION" \
-            "" \
-            "Wraps DeepSeek Harness $HARNESS. Channel: $CHANNEL." \
-            "" \
-            "Signed with Developer ID and notarized by Apple. Gate evidence: \`pnpm verify:release\`, plus the packaged-app smokes." )
+          #
+          # THE NOTES ARE THE REPOSITORY'S, not generated here: `release-notes/v<version>.md`
+          # is the file a person reviews and edits, and a tagged release that carried a
+          # different paragraph than the repo would be a second source of truth.
+          NOTES_FILE="packages/mitsumeru/release-notes/v$VERSION.md"
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "no $NOTES_FILE — the notes are what a release says it contains; write them first" >&2
+            exit 1
+          fi
 
           case "$CHANNEL" in
             dev) MODE=--prerelease ;;
             *)   MODE=--latest ;;
           esac
 
-          gh release create "$TAG" \
-            --target "$GITHUB_SHA" \
-            --title "Mitsumeru $VERSION" \
-            --notes "$NOTES" \
-            $MODE \
-            release/*.dmg release/*.zip release/*-mac.yml
+          # IDEMPOTENT ON PURPOSE. A production release is published locally (this runner
+          # builds arm64 only — see the header), and the tag that publish creates must not
+          # make this workflow fail: it refreshes the notes and uploads its own artifacts
+          # over any same-named asset rather than refusing to run.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists — refreshing its notes and clobbering its assets"
+            gh release edit "$TAG" --title "Mitsumeru $VERSION" --notes-file "$NOTES_FILE" $MODE
+            gh release upload "$TAG" release/*.dmg release/*.zip release/*-mac.yml --clobber
+          else
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Mitsumeru $VERSION" \
+              --notes-file "$NOTES_FILE" \
+              $MODE \
+              release/*.dmg release/*.zip release/*-mac.yml
+          fi
 
           echo "published $TAG ($MODE) with $(ls release/*.dmg release/*.zip release/*-mac.yml | wc -l | tr -d ' ') assets"
