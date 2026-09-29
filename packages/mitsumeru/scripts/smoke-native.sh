@@ -56,12 +56,18 @@ fi
 
 # --- 1b. signed by the same identity as the app ------------------------------
 
+# sharp's pair is versioned by upstream; resolve the real filenames so a
+# closure bump cannot fail this check with a stale fixture name (broke on the
+# 0.2.0-rc.2 re-pin: 0.35.4/8.18.6 → 0.35.5/8.18.7).
+SHARP_NODE=$(basename "$(ls "$H"/@img/sharp-darwin-arm64/lib/sharp-darwin-arm64-*.node 2>/dev/null | head -1)")
+SHARP_VIPS=$(basename "$(ls "$H"/@img/sharp-libvips-darwin-arm64/lib/libvips-cpp.*.dylib 2>/dev/null | head -1)")
+
 for lib in \
   "node-pty/prebuilds/darwin-arm64/pty.node" \
   "node-pty/prebuilds/darwin-arm64/spawn-helper" \
   "@koromix/koffi-darwin-arm64/darwin_arm64/koffi.node" \
-  "@img/sharp-darwin-arm64/lib/sharp-darwin-arm64-0.35.4.node" \
-  "@img/sharp-libvips-darwin-arm64/lib/libvips-cpp.8.18.6.dylib" \
+  "@img/sharp-darwin-arm64/lib/$SHARP_NODE" \
+  "@img/sharp-libvips-darwin-arm64/lib/$SHARP_VIPS" \
   "@deepseek-ai/node-addon-system-darwin-arm64/bin/system.node"; do
   name=$(basename "$lib")
   sig=$(codesign -dv "$H/$lib" 2>&1)
