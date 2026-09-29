@@ -4,6 +4,9 @@ import { copyFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import { isDevVersion, releaseChannel, UPDATE_FEED_URL } from '../shared/identity'
+import type { UpdateStatus } from '../shared/update-status'
+
+export type { UpdateStatus } from '../shared/update-status'
 
 /**
  * Update client (Epic 86 T12). Client config only — the feed endpoint itself is
@@ -34,26 +37,6 @@ const RESUME_DELAY_MS = 5_000
 /** Download progress is logged every N percent, not on every event. */
 const PROGRESS_STEP = 10
 
-export interface UpdateStatus {
-  state:
-    | 'disabled'
-    | 'idle'
-    | 'checking'
-    | 'current'
-    | 'available'
-    | 'downloading'
-    | 'downloaded'
-    | 'error'
-  /** Version the updater is talking about (available/downloaded), if any. */
-  version?: string
-  percent?: number
-  message?: string
-  /** Where the downloaded version was archived, when it was. */
-  archived?: string
-  /** Epoch ms of the last state change. */
-  at: number
-}
-
 export interface UpdaterOptions {
   log: (message: string) => void
   /** Guard for IPC callers: only the window showing the harness may ask. */
@@ -75,6 +58,13 @@ export interface UpdaterOptions {
    * this module holds no UI.
    */
   onDownloaded?: (version: string) => void
+  /**
+   * The state changed (Epic 91). The shell forwards this to the window as an
+   * IPC push so the injected update banner reacts the moment an update becomes
+   * ready instead of polling up to 5 s late. Pushes are deduped in setStatus —
+   * a download-progress event that rounds to the same percent is not a change.
+   */
+  onStatusChange?: (status: UpdateStatus) => void
 }
 
 export interface UpdaterController {
@@ -98,14 +88,24 @@ export interface UpdaterController {
 }
 
 export function startUpdater(options: UpdaterOptions): UpdaterController {
-  const { log, isTrustedSender, feedUrl, manualOnly = false, onDownloaded } = options
+  const { log, isTrustedSender, feedUrl, manualOnly = false, onDownloaded, onStatusChange } = options
 
   let status: UpdateStatus = { state: 'idle', at: Date.now() }
   let nextTimer: NodeJS.Timeout | null = null
   let stopped = false
+  /** Which check is in flight / last ran. Stamped onto every status so the
+   *  banner can tell "the person asked" from "the schedule ran". */
+  let currentTrigger = 'startup'
 
   const setStatus = (next: Omit<UpdateStatus, 'at'>): void => {
-    status = { ...next, at: Date.now() }
+    const updated: UpdateStatus = { ...next, trigger: currentTrigger, at: Date.now() }
+    const changed =
+      updated.state !== status.state ||
+      updated.version !== status.version ||
+      updated.percent !== status.percent ||
+      updated.trigger !== status.trigger
+    status = updated
+    if (changed) onStatusChange?.(updated)
   }
 
   // One timer, always: a check reschedules the next one, and a resume or a
@@ -162,6 +162,7 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
 
   const check = async (trigger: string): Promise<UpdateStatus> => {
     if (stopped) return status
+    currentTrigger = trigger
     log(`update-check-start trigger=${trigger}`)
     setStatus({ state: 'checking' })
     let failed = false
@@ -218,8 +219,14 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
       ` prerelease=${String(autoUpdater.allowPrerelease)}`
   )
 
+  // The version on offer, remembered so download-progress can carry it: each
+  // setStatus replaces the whole status, and a progress event has no version
+  // of its own — without this the banner renders "Downloading v… 22%".
+  let offeredVersion: string | undefined
+
   autoUpdater.on('update-available', (info) => {
     log(`update-available version=${info.version}`)
+    offeredVersion = info.version
     setStatus({ state: 'available', version: info.version })
   })
   autoUpdater.on('update-not-available', (info) => {
@@ -228,7 +235,7 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   })
   autoUpdater.on('download-progress', (progress) => {
     const percent = Math.round(progress.percent)
-    setStatus({ state: 'downloading', percent })
+    setStatus({ state: 'downloading', percent, version: offeredVersion })
     if (percent % PROGRESS_STEP === 0) {
       log(`update-download-progress percent=${String(percent)} bps=${String(Math.round(progress.bytesPerSecond))}`)
     }

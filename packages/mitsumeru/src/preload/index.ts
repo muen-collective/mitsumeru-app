@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import { APP_NAME } from '../shared/identity'
+import type { UpdateStatus } from '../shared/update-status'
 
 /**
  * mitsumeru preload.
@@ -53,8 +54,20 @@ contextBridge.exposeInMainWorld(APP_NAME, {
   checkForUpdates: () => ipcRenderer.invoke('mitsumeru:update-check'),
   updateStatus: () => ipcRenderer.invoke('mitsumeru:update-status'),
   archivedVersions: () => ipcRenderer.invoke('mitsumeru:update-archive'),
-  // Restart into a downloaded version. Exposed for completeness — the shell's own
-  // window is the harness's page, so today the dialog and the menu are what
-  // actually call it.
+  // Push subscription for the injected update banner (Epic 91): the updater's
+  // state changes are forwarded to this window as `mitsumeru:update-changed`,
+  // so the banner reacts the moment an update is ready instead of polling.
+  // The channel is separate from the `update-status` invoke above — one asks,
+  // the other is told. Returns an unsubscribe.
+  onUpdateStatus: (cb: (status: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus): void => cb(status)
+    ipcRenderer.on('mitsumeru:update-changed', listener)
+    return () => {
+      ipcRenderer.removeListener('mitsumeru:update-changed', listener)
+    }
+  },
+  // Restart into a downloaded version. Called by the ready-dialog's first
+  // button, the app menu's "Restart to Update…", and the update banner's
+  // "Restart Now" — three surfaces, one action.
   restartToUpdate: () => ipcRenderer.invoke('mitsumeru:update-restart')
 })

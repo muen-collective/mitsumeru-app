@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { spawnHarness, harnessPaths, type HarnessSession } from './harness'
 import { startUpdater, type UpdaterController } from './updater'
+import { injectUpdateBanner } from './update-banner'
 import {
   APP_ID,
   APP_NAME,
@@ -127,6 +128,11 @@ function createSplashWindow(): BrowserWindow {
     if (HARNESS_TITLES.includes(title)) {
       harnessUiLoaded = true
       log('harness-ui-loaded')
+      // Epic 91: the update banner rides the harness page, injected here —
+      // the title check keeps it off the splash and off the browser-trust
+      // fence's fallback page, and injectUpdateBanner's element guard keeps a
+      // second load from doubling it.
+      injectUpdateBanner(win, log)
     }
   })
 
@@ -513,7 +519,16 @@ app.whenReady().then(() => {
       log,
       isTrustedSender: isHarnessNavigation,
       feedUrl: feedOverride === '' ? undefined : feedOverride,
-      onDownloaded: offerRestart
+      onDownloaded: offerRestart,
+      // Epic 91: push every state change to the window so the injected banner
+      // reacts as it happens. A window that does not listen (splash, or a
+      // page before the banner injected) simply drops the message, and the
+      // banner's initial `updateStatus()` pull catches it up.
+      onStatusChange: (status) => {
+        if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.send('mitsumeru:update-changed', status)
+        }
+      }
     })
   }
   mainWindow = createSplashWindow()

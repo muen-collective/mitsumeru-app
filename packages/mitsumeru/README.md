@@ -6,11 +6,13 @@ process; the contract is process-to-process (Epic 86, measured in `artifacts/ent
 of the pilot).
 
 ```
-src/main/index.ts       window, lifecycle, single-instance lock, lockdown, link policy, probes
-src/main/harness.ts     spawn / readiness / shutdown of the harness child
-src/main/updater.ts     update client — schedule, feed, archive, IPC (T12)
-src/preload/index.ts    trusted-click → external-link IPC (the only browser-opening path)
-src/shared/identity.ts  app identity — the one place the name lives
+src/main/index.ts         window, lifecycle, single-instance lock, lockdown, link policy, probes
+src/main/harness.ts       spawn / readiness / shutdown of the harness child
+src/main/updater.ts       update client — schedule, feed, archive, IPC (T12), status push (Epic 91)
+src/main/update-banner.ts the update strip injected into the harness page (Epic 91)
+src/preload/index.ts      trusted-click → external-link IPC + the window.mitsumeru bridge
+src/shared/identity.ts    app identity — the one place the name lives
+src/shared/update-status.ts  UpdateStatus — the updater's state, shared by producer and banner
 ```
 
 ## Bundle strategy — the harness arrives as a published npm closure
