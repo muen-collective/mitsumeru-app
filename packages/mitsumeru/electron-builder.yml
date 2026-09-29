@@ -9,6 +9,16 @@ appId: com.muen.mitsumeru
 productName: Mitsumeru
 copyright: Muen
 
+# Muen sign-in (Epic 92): the OAuth server redirects back to
+# mitsumeru://auth/callback?code=..., and this is what makes macOS hand that
+# URL to THIS app. electron-builder writes it into Info.plist (CFBundleURLTypes);
+# without it the deep link lands on no registered handler and sign-in can never
+# complete. Windows gets the same scheme through the NSIS installer.
+protocols:
+  - name: Mitsumeru
+    schemes:
+      - mitsumeru
+
 asar: false
 npmRebuild: false
 

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import { APP_NAME } from '../shared/identity'
+import type { MuenUser } from '../shared/auth'
 import type { UpdateStatus } from '../shared/update-status'
 
 /**
@@ -69,5 +70,23 @@ contextBridge.exposeInMainWorld(APP_NAME, {
   // Restart into a downloaded version. Called by the ready-dialog's first
   // button, the app menu's "Restart to Update…", and the update banner's
   // "Restart Now" — three surfaces, one action.
-  restartToUpdate: () => ipcRenderer.invoke('mitsumeru:update-restart')
+  restartToUpdate: () => ipcRenderer.invoke('mitsumeru:update-restart'),
+  // Muen sign-in (Epic 92). The token deliberately has no getter for the
+  // overlay — only the main process and the gated plugin flow (which asks
+  // through the trusted IPC) ever see it; the overlay deals in MuenUser.
+  auth: {
+    signIn: (): Promise<void> => ipcRenderer.invoke('mitsumeru:auth-sign-in'),
+    signOut: (): Promise<void> => ipcRenderer.invoke('mitsumeru:auth-sign-out'),
+    user: (): Promise<MuenUser | null> => ipcRenderer.invoke('mitsumeru:auth-user'),
+    token: (): Promise<string | null> => ipcRenderer.invoke('mitsumeru:auth-token'),
+    // Push subscription: sign-in and sign-out both arrive as
+    // `mitsumeru:auth-changed` (same ask/tell split as the update channels).
+    onAuthChange: (cb: (user: MuenUser | null) => void): (() => void) => {
+      const listener = (_event: IpcRendererEvent, user: MuenUser | null): void => cb(user)
+      ipcRenderer.on('mitsumeru:auth-changed', listener)
+      return () => {
+        ipcRenderer.removeListener('mitsumeru:auth-changed', listener)
+      }
+    }
+  }
 })

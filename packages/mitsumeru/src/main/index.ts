@@ -13,9 +13,12 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { spawnHarness, harnessPaths, type HarnessSession } from './harness'
 import { startUpdater, type UpdaterController } from './updater'
 import { injectUpdateBanner } from './update-banner'
+import { startAuth, type AuthController } from './auth'
+import { injectAvatarOverlay } from './avatar-overlay'
 import {
   APP_ID,
   APP_NAME,
+  AUTH_SCHEME,
   HARNESS_PACKAGE,
   HARNESS_TITLES,
   PRODUCT_NAME,
@@ -57,6 +60,9 @@ let harnessLogPath = ''
 let harnessOrigin = '' // set once the readiness URL is known; navigation fence
 let harnessUiLoaded = false
 let gotSingleInstanceLock = false
+let auth: AuthController | null = null
+/** A mitsumeru:// link that arrived before whenReady finished wiring auth. */
+let pendingAuthUrl: string | null = null
 
 // ---- T3: single instance lock ---------------------------------------------
 
@@ -69,6 +75,11 @@ if (!gotSingleInstanceLock) {
 } else {
   app.on('second-instance', (_event, argv, workingDirectory) => {
     log(`second-instance argv=${JSON.stringify(argv.slice(1))} cwd=${workingDirectory}`)
+    // Epic 92: on Windows/Linux the deep link arrives as an argv entry (macOS
+    // delivers open-url instead). Route it before the focus dance — the link
+    // is the reason the second process existed.
+    const link = argv.find((arg) => arg.startsWith(`${AUTH_SCHEME}://`))
+    if (link !== undefined) handleAuthUrl(link)
     if (mainWindow !== null) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
@@ -77,6 +88,21 @@ if (!gotSingleInstanceLock) {
     }
   })
 }
+
+// ---- Epic 92: deep link -----------------------------------------------------
+
+/** mitsumeru://auth/callback?code=... (or ?error=...) arrived from the browser. */
+function handleAuthUrl(url: string): void {
+  if (auth !== null) auth.handleDeepLink(url)
+  else pendingAuthUrl = url // pre-ready: flushed right after startAuth
+}
+
+// Registered before ready — macOS can deliver open-url at launch, and a
+// handler attached after the event fires never sees it.
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  handleAuthUrl(url)
+})
 
 // ---- window + lockdown (T5) ------------------------------------------------
 
@@ -133,6 +159,8 @@ function createSplashWindow(): BrowserWindow {
       // fence's fallback page, and injectUpdateBanner's element guard keeps a
       // second load from doubling it.
       injectUpdateBanner(win, log)
+      // Epic 92: same hook, same guard, lower-left corner.
+      injectAvatarOverlay(win, log)
     }
   })
 
@@ -531,6 +559,25 @@ app.whenReady().then(() => {
       }
     })
   }
+  // Epic 92: Muen sign-in. setAsDefaultProtocolClient covers dev runs; the
+  // packaged registration is CFBundleURLTypes from electron-builder's
+  // `protocols` entry. The pending flush covers a link delivered while the app
+  // was still starting.
+  app.setAsDefaultProtocolClient(AUTH_SCHEME)
+  auth = startAuth({
+    log,
+    isTrustedSender: isHarnessNavigation,
+    onSessionChange: (session) => {
+      if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send('mitsumeru:auth-changed', session?.user ?? null)
+      }
+    }
+  })
+  if (pendingAuthUrl !== null) {
+    const url = pendingAuthUrl
+    pendingAuthUrl = null
+    auth.handleDeepLink(url)
+  }
   mainWindow = createSplashWindow()
   loadSplash()
   void startHarnessAndLoad()
@@ -579,6 +626,7 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   log('will-quit')
   updater?.stop()
+  auth?.stop()
   session_harness?.stop('quit')
 })
 

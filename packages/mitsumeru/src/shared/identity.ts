@@ -53,6 +53,15 @@ export const UPDATE_FEED_URL = `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO
 export const HARNESS_PACKAGE = '@deepseek-ai/dsh'
 
 /**
+ * Muen sign-in (Epic 92). Where the OAuth server lives and the deep-link
+ * scheme it redirects back to. The default origin is the org's existing site —
+ * Epic 92 Q2 (dedicated auth host vs mitsumeru.vercel.app) is still open, so a
+ * run can point elsewhere with MITSUMERU_AUTH_ORIGIN without rebuilding.
+ */
+export const AUTH_ORIGIN = 'https://mitsumeru.vercel.app'
+export const AUTH_SCHEME = 'mitsumeru'
+
+/**
  * Release labeling (Epic 86 T11). Internal builds, download links, release
  * notes and CTAs all carry `-dev` until a build is promoted to production;
  * the same suffix is what tells the updater to track the dev channel.
