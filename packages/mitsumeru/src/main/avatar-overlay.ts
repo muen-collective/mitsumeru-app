@@ -3,18 +3,28 @@ import type { BrowserWindow } from 'electron'
 import type { MuenUser } from '../shared/auth'
 
 /**
- * The Muen avatar slot (Epic 92) — a 36 px orb in the lower-left of the
- * harness window, the position DeepSeek Desktop uses for its Google avatar.
+ * The Muen account row + menu (Epic 92) — bottom-left of the harness window,
+ * the slot DeepSeek Desktop uses: avatar + label row that opens a click menu
+ * (their reference: Settings / Feedback / Sign out). Ours, v1:
  *
- *   signed out  -> an "M" mark; clicking it starts sign-in (opens the browser)
- *   signed in   -> the user's GitHub picture; PRO members carry a PRO badge;
- *                  hovering opens name / email / membership / Sign Out
+ *   signed out  -> [M] "Sign in to Muen"   click starts sign-in (browser)
+ *   signed in   -> [avatar] "Signed in to Muen"
+ *                    click -> menu:  Language > English / 中文
+ *                                    ─────────
+ *                                    Sign out
+ *
+ * The Language item lives here on the founder's call ("move the language
+ * switcher into the menu") and writes the harness's own locale preference
+ * over the settings wire it uses — `POST /api/settings/update`,
+ * `{args: {ns: 'locale', patch: {preference: id}}}` — which the harness applies
+ * live (measured: html lang flips in ~2.5 s, no reload). The preference is the
+ * Host user-settings document's `locale.preference` (values `en`/`zh`), so the
+ * harness's Settings → General row and this menu always agree.
  *
  * Shell-owned, same reasoning as the update banner (Epic 91): sign-in state is
- * the shell's keychain session, and a DSH plugin cannot reach it. Injected into
- * the harness page after load and driven through the `window.mitsumeru.auth`
- * bridge the preload exposes. The script is self-contained — it is stringified
- * into `executeJavaScript` and must not reference anything outside its body.
+ * the shell's keychain session and a DSH plugin cannot reach it. Injected after
+ * harness load; the page script is self-contained — it is stringified into
+ * `executeJavaScript` and must not reference anything outside its body.
  */
 
 /** Idempotent: a full reload re-injects, a duplicate call does not double up. */
@@ -31,10 +41,11 @@ export function injectAvatarOverlay(win: BrowserWindow, log: (message: string) =
 }
 
 /**
- * Runs IN the harness page's main world. Initial state comes from
- * `auth.user()` (one pull), later changes are pushed through `auth.onAuthChange`
- * — the main process tells the overlay the moment a sign-in completes or the
- * session is cleared, so the orb never shows a stale identity.
+ * Runs IN the harness page's main world. Auth state comes from one
+ * `auth.user()` pull plus `auth.onAuthChange` pushes; the language switch is
+ * the harness's own settings API, called exactly the way its Language row
+ * calls it (generated typert remote: `settings/update`, args-wrapped, measured
+ * 2026-09-29 against 0.1.7-rc.1).
  */
 function avatarPageScript(): void {
   const ROOT_ID = 'mitsumeru-avatar-overlay'
@@ -46,14 +57,74 @@ function avatarPageScript(): void {
     user?: () => Promise<MuenUser | null>
     onAuthChange?: (cb: (user: MuenUser | null) => void) => (() => void) | undefined
   }
-  const bridge = (window as unknown as { mitsumeru?: { auth?: AuthBridge } }).mitsumeru?.auth
-  if (bridge === undefined || bridge.user === undefined || bridge.onAuthChange === undefined) return
+  const auth = (window as unknown as { mitsumeru?: { auth?: AuthBridge } }).mitsumeru?.auth
+  if (auth === undefined || auth.user === undefined || auth.onAuthChange === undefined) return
+
+  // The harness's shipped catalog (dsh-client-locale: LOCALE_IDS = zh, en),
+  // in native names the way every language menu lists them.
+  const LOCALES: Array<{ id: string; label: string }> = [
+    { id: 'en', label: 'English' },
+    { id: 'zh', label: '中文' }
+  ]
+  // The overlay speaks both languages too — after a switch its own labels
+  // follow, so the menu demonstrates the very thing it switches.
+  const STRINGS: Record<string, Record<string, string>> = {
+    en: {
+      signIn: 'Sign in to Muen',
+      signedIn: 'Signed in to Muen',
+      language: 'Language',
+      signOut: 'Sign out',
+      switchFailed: 'Could not switch language — try again'
+    },
+    zh: {
+      signIn: '登录 Muen',
+      signedIn: '已登录 Muen',
+      language: '语言',
+      signOut: '退出登录',
+      switchFailed: '语言切换失败 — 请重试'
+    }
+  }
+  const currentLang = (): string => {
+    // A successful switch sets langOverride immediately: the harness flips its
+    // own html lang ~2.5 s later (measured), and our labels must not lag it.
+    if (langOverride !== null) return langOverride
+    const base = (document.documentElement.lang || 'en').split('-')[0]
+    return base in STRINGS ? base : 'en'
+  }
+  const strings = (): Record<string, string> => STRINGS[currentLang()]
+
+  const uuid = (): string =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  /** The harness's locale write — same wire its own Language row uses. */
+  const switchLocale = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/settings/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: uuid(),
+          method: 'settings/update',
+          payload: { args: { ns: 'locale', patch: { preference: id } } }
+        })
+      })
+      if (!res.ok) return false
+      const data = (await res.json()) as { result?: { ok?: boolean } }
+      return data.result?.ok === true
+    } catch {
+      return false
+    }
+  }
+
+  // ---- DOM -----------------------------------------------------------------
 
   const root = document.createElement('div')
   root.id = ROOT_ID
   root.setAttribute('role', 'group')
   root.setAttribute('aria-label', 'Muen account')
-  // Inline so the orb keeps its position even if the stylesheet were rejected.
   root.style.position = 'fixed'
   root.style.left = '16px'
   root.style.bottom = '16px'
@@ -61,17 +132,27 @@ function avatarPageScript(): void {
 
   const style = document.createElement('style')
   style.textContent = `
-    #${ROOT_ID} { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #f2f2f2; }
-    #${ROOT_ID} .mua-orb {
-      position: relative; width: 36px; height: 36px; padding: 0;
-      border-radius: 50%; border: 1px solid #3a3b3b; overflow: visible;
-      background: #191a1a; color: #f2f2f2; cursor: pointer;
-      font: inherit; font-size: 15px; font-weight: 700; line-height: 34px;
-      text-align: center; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    #${ROOT_ID} {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px; color: #f2f2f2;
     }
-    #${ROOT_ID} .mua-orb:hover { border-color: #606060; }
-    #${ROOT_ID} .mua-orb img {
-      position: absolute; inset: 0; width: 36px; height: 36px;
+    #${ROOT_ID} .mua-row {
+      display: flex; align-items: center; gap: 10px;
+      height: 40px; padding: 0 10px 0 4px;
+      border: 0; border-radius: 20px;
+      background: transparent; color: #f2f2f2;
+      font: inherit; cursor: pointer;
+    }
+    #${ROOT_ID} .mua-row:hover { background: rgba(255, 255, 255, 0.06); }
+    #${ROOT_ID} .mua-avatar {
+      position: relative; width: 32px; height: 32px; flex: none;
+      border-radius: 50%; background: #191a1a;
+      border: 1px solid #3a3b3b; overflow: visible;
+      font-size: 14px; font-weight: 700; line-height: 30px;
+      text-align: center;
+    }
+    #${ROOT_ID} .mua-avatar img {
+      position: absolute; inset: 0; width: 32px; height: 32px;
       border-radius: 50%; object-fit: cover;
     }
     #${ROOT_ID} .mua-pro {
@@ -81,117 +162,251 @@ function avatarPageScript(): void {
       font-size: 8px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.4;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
     }
-    #${ROOT_ID} .mua-pop {
-      display: none; position: absolute; left: 44px; bottom: 0;
-      min-width: 190px; padding: 10px 12px;
-      background: #191a1a; border: 1px solid #2a2b2b; border-radius: 4px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-      text-align: left; line-height: 1.5;
+    #${ROOT_ID} .mua-label { white-space: nowrap; }
+    #${ROOT_ID} .mua-menu {
+      display: none; position: absolute; left: 0; bottom: calc(100% + 6px);
+      min-width: 210px; padding: 6px;
+      background: #1c1c1e; border: 1px solid #2a2b2b; border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
     }
-    #${ROOT_ID}:hover .mua-pop, #${ROOT_ID} .mua-pop:focus-within { display: block; }
-    #${ROOT_ID} .mua-name { font-weight: 700; white-space: nowrap; }
-    #${ROOT_ID} .mua-email { color: #606060; white-space: nowrap; }
-    #${ROOT_ID} .mua-tier { color: #f2f2f2; }
-    #${ROOT_ID} .mua-pop hr { border: 0; border-top: 1px solid #2a2b2b; margin: 8px 0; }
-    #${ROOT_ID} .mua-signout {
-      appearance: none; font: inherit; font-size: 11px; padding: 5px 10px;
-      border: 1px solid #3a3b3b; border-radius: 3px;
-      background: transparent; color: #f2f2f2; cursor: pointer;
+    #${ROOT_ID} .mua-menu[data-open='1'] { display: block; }
+    #${ROOT_ID} .mua-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; padding: 8px 10px;
+      border: 0; border-radius: 6px;
+      background: transparent; color: #f2f2f2;
+      font: inherit; text-align: left; cursor: pointer;
     }
-    #${ROOT_ID} .mua-signout:hover { background: #262727; }
-    @media (prefers-reduced-motion: reduce) { #${ROOT_ID} .mua-orb { transition: none; } }
+    #${ROOT_ID} .mua-item:hover, #${ROOT_ID} .mua-opt:hover { background: #262727; }
+    #${ROOT_ID} .mua-chev { color: #606060; font-size: 14px; }
+    #${ROOT_ID} .mua-sub { display: none; padding: 2px 0 4px; }
+    #${ROOT_ID} .mua-sub[data-open='1'] { display: block; }
+    #${ROOT_ID} .mua-opt {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; padding: 7px 10px 7px 22px;
+      border: 0; border-radius: 6px;
+      background: transparent; color: #cfcfcf;
+      font: inherit; text-align: left; cursor: pointer;
+    }
+    #${ROOT_ID} .mua-opt[aria-checked='true'] { color: #ffffff; }
+    #${ROOT_ID} .mua-check { color: #ff0000; visibility: hidden; }
+    #${ROOT_ID} .mua-opt[aria-checked='true'] .mua-check { visibility: visible; }
+    #${ROOT_ID} .mua-sep { border: 0; border-top: 1px solid #2a2b2b; margin: 6px 4px; }
+    #${ROOT_ID} .mua-error {
+      display: none; padding: 6px 10px; color: #ff6b6b; font-size: 12px;
+    }
+    #${ROOT_ID} .mua-error[data-on='1'] { display: block; }
   `
 
-  const orb = document.createElement('button')
-  orb.className = 'mua-orb'
-  orb.type = 'button'
+  const row = document.createElement('button')
+  row.className = 'mua-row'
+  row.type = 'button'
+  row.setAttribute('aria-haspopup', 'menu')
+  row.setAttribute('aria-expanded', 'false')
+
+  const avatar = document.createElement('span')
+  avatar.className = 'mua-avatar'
 
   const badge = document.createElement('span')
   badge.className = 'mua-pro'
   badge.textContent = 'PRO'
   badge.style.display = 'none'
+  avatar.appendChild(badge)
 
-  const pop = document.createElement('div')
-  pop.className = 'mua-pop'
-  const nameEl = document.createElement('div')
-  nameEl.className = 'mua-name'
-  const emailEl = document.createElement('div')
-  emailEl.className = 'mua-email'
-  const tierEl = document.createElement('div')
-  tierEl.className = 'mua-tier'
-  const rule = document.createElement('hr')
+  const label = document.createElement('span')
+  label.className = 'mua-label'
+  row.append(avatar, label)
+
+  const menu = document.createElement('div')
+  menu.className = 'mua-menu'
+  menu.setAttribute('role', 'menu')
+
+  const langItem = document.createElement('button')
+  langItem.className = 'mua-item'
+  langItem.type = 'button'
+  langItem.setAttribute('role', 'menuitem')
+  const langText = document.createElement('span')
+  const langChev = document.createElement('span')
+  langChev.className = 'mua-chev'
+  langChev.textContent = '›'
+  langItem.append(langText, langChev)
+
+  const sub = document.createElement('div')
+  sub.className = 'mua-sub'
+  const options = LOCALES.map((locale) => {
+    const opt = document.createElement('button')
+    opt.className = 'mua-opt'
+    opt.type = 'button'
+    opt.setAttribute('role', 'menuitemradio')
+    opt.dataset.locale = locale.id
+    const text = document.createElement('span')
+    text.textContent = locale.label
+    const check = document.createElement('span')
+    check.className = 'mua-check'
+    check.textContent = '✓'
+    opt.append(text, check)
+    opt.addEventListener('click', () => {
+      void pickLocale(locale.id)
+    })
+    sub.appendChild(opt)
+    return { id: locale.id, opt }
+  })
+
+  const errorLine = document.createElement('div')
+  errorLine.className = 'mua-error'
+
+  const sep = document.createElement('hr')
+  sep.className = 'mua-sep'
+
   const signOut = document.createElement('button')
-  signOut.className = 'mua-signout'
+  signOut.className = 'mua-item mua-signout'
   signOut.type = 'button'
-  signOut.textContent = 'Sign Out'
-  pop.append(nameEl, emailEl, tierEl, rule, signOut)
+  signOut.setAttribute('role', 'menuitem')
+  const signOutText = document.createElement('span')
+  signOut.appendChild(signOutText)
 
-  root.append(style, orb, pop)
+  menu.append(langItem, sub, errorLine, sep, signOut)
+  root.append(style, row, menu)
   ;(document.body ?? document.documentElement).appendChild(root)
 
+  // ---- state + behaviour ---------------------------------------------------
+
   let current: MuenUser | null = null
+  let menuOpen = false
+  let subOpen = false
+  /** The id this session's successful switch claimed; see currentLang(). */
+  let langOverride: string | null = null
+
+  const applyStrings = (): void => {
+    const s = strings()
+    label.textContent = current === null ? s.signIn : s.signedIn
+    langText.textContent = s.language
+    signOutText.textContent = s.signOut
+    errorLine.textContent = s.switchFailed
+  }
+
+  const markChecked = (): void => {
+    const active = currentLang()
+    for (const { id, opt } of options) {
+      opt.setAttribute('aria-checked', String(id === active))
+    }
+  }
+
+  const setMenu = (open: boolean): void => {
+    menuOpen = open
+    if (!open) subOpen = false
+    menu.dataset.open = open ? '1' : '0'
+    sub.dataset.open = subOpen ? '1' : '0'
+    errorLine.dataset.on = '0'
+    row.setAttribute('aria-expanded', String(open))
+  }
+
+  const pickLocale = async (id: string): Promise<void> => {
+    markCheckedTo(id)
+    const ok = await switchLocale(id)
+    if (ok) {
+      // The harness flips its own html lang live (measured ~2.5 s); claim the
+      // id now so labels and the check mark switch with the click instead of
+      // trailing the html attribute.
+      langOverride = id
+      setMenu(false)
+      applyStrings()
+      markChecked()
+    } else {
+      errorLine.dataset.on = '1'
+      subOpen = false
+      sub.dataset.open = '0'
+    }
+  }
+
+  const markCheckedTo = (id: string): void => {
+    for (const { id: optionId, opt } of options) {
+      opt.setAttribute('aria-checked', String(optionId === id))
+    }
+  }
+
+  langItem.addEventListener('click', () => {
+    subOpen = !subOpen
+    sub.dataset.open = subOpen ? '1' : '0'
+    errorLine.dataset.on = '0'
+    markChecked()
+  })
+
+  signOut.addEventListener('click', () => {
+    setMenu(false)
+    void auth.signOut?.()
+  })
+
+  row.addEventListener('click', () => {
+    if (current === null) {
+      void auth.signIn?.()
+      return
+    }
+    setMenu(!menuOpen)
+    if (menuOpen) markChecked()
+  })
+
+  // Outside click and Esc close the menu (a menu that cannot be dismissed is
+  // worse than no menu).
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!menuOpen) return
+      if (event.target instanceof Node && !root.contains(event.target)) setMenu(false)
+    },
+    true
+  )
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && menuOpen) setMenu(false)
+  })
+
+  // ---- auth state ----------------------------------------------------------
 
   const render = (user: MuenUser | null): void => {
     current = user
-    const old = orb.querySelector('img')
-    if (old !== null) old.remove()
-    const initial = orb.querySelector('.mua-initial')
-    if (initial !== null) initial.remove()
+    setMenu(false)
+    for (const child of Array.from(avatar.querySelectorAll('img, .mua-initial'))) child.remove()
 
+    applyStrings()
     if (user === null) {
-      orb.setAttribute('aria-label', 'Sign in to Muen')
-      orb.title = 'Sign in to Muen'
+      row.setAttribute('aria-label', strings().signIn)
+      row.title = strings().signIn
+      badge.style.display = 'none'
       const span = document.createElement('span')
       span.className = 'mua-initial'
       span.textContent = 'M'
-      orb.appendChild(span)
-      badge.style.display = 'none'
-      pop.style.display = 'none'
+      avatar.appendChild(span)
       return
     }
 
-    orb.setAttribute('aria-label', `${user.name} — Muen ${user.membership === 'pro' ? 'PRO ' : ''}member`)
-    orb.title = `${user.name} (${user.email})`
+    row.setAttribute('aria-label', `${user.name} — Muen ${user.membership === 'pro' ? 'PRO ' : ''}member`)
+    row.title = `${user.name} (${user.email})`
     if (user.avatarUrl !== '') {
       const img = document.createElement('img')
       img.src = user.avatarUrl
       img.alt = ''
-      // Avatar CDNs sometimes key on referrer; drop ours rather than 403.
       img.referrerPolicy = 'no-referrer'
       img.addEventListener('error', () => {
         // Picture failed (offline, URL gone): fall back to the initial.
         img.remove()
-        if (orb.querySelector('.mua-initial') === null) {
+        if (avatar.querySelector('.mua-initial') === null) {
           const span = document.createElement('span')
           span.className = 'mua-initial'
           span.textContent = (user.name.trim()[0] ?? 'M').toUpperCase()
-          orb.appendChild(span)
+          avatar.appendChild(span)
         }
       })
-      orb.appendChild(img)
+      avatar.appendChild(img)
     } else {
       const span = document.createElement('span')
       span.className = 'mua-initial'
       span.textContent = (user.name.trim()[0] ?? 'M').toUpperCase()
-      orb.appendChild(span)
+      avatar.appendChild(span)
     }
     badge.style.display = user.membership === 'pro' ? 'block' : 'none'
-    nameEl.textContent = user.name
-    emailEl.textContent = user.email
-    tierEl.textContent = user.membership === 'pro' ? 'PRO Member ✓' : 'Muen Member'
-    pop.style.display = ''
+    markChecked()
   }
 
-  orb.appendChild(badge)
-  orb.addEventListener('click', () => {
-    if (current === null) void bridge.signIn?.()
-    // Signed in: hover (or focus-within) already shows the popover; a click is
-    // a no-op — there is nothing to open that the popover does not show.
-  })
-  signOut.addEventListener('click', () => {
-    void bridge.signOut?.()
-  })
-
-  bridge.onAuthChange(render)
-  void bridge.user()?.then(render).catch(() => undefined)
+  auth.onAuthChange(render)
+  void auth.user()?.then(render).catch(() => undefined)
 }

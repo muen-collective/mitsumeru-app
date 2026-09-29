@@ -10,9 +10,12 @@ src/main/index.ts         window, lifecycle, single-instance lock, lockdown, lin
 src/main/harness.ts       spawn / readiness / shutdown of the harness child
 src/main/updater.ts       update client — schedule, feed, archive, IPC (T12), status push (Epic 91)
 src/main/update-banner.ts the update strip injected into the harness page (Epic 91)
+src/main/auth.ts          Muen sign-in — deep link, exchange, keychain session (Epic 92)
+src/main/avatar-overlay.ts account row + menu injected lower-left: language switch, sign out (Epic 92)
 src/preload/index.ts      trusted-click → external-link IPC + the window.mitsumeru bridge
 src/shared/identity.ts    app identity — the one place the name lives
 src/shared/update-status.ts  UpdateStatus — the updater's state, shared by producer and banner
+src/shared/auth.ts        MuenUser / AuthSession — shared by shell, preload and overlay
 ```
 
 ## Bundle strategy — the harness arrives as a published npm closure
