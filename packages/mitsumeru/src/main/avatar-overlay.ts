@@ -313,9 +313,15 @@ function avatarPageScript(): void {
     const s = strings()
     // The signed-in row shows the ACCOUNT, not a constant (founder, 2026-10-02:
     // *"it always says signed in w Muen even though I sign in with different
-    // accounts"* — a label identical for every identity can never distinguish
-    // them). Email first; the constant stays as the empty-email fallback.
-    label.textContent = current === null ? s.signIn : current.email !== '' ? current.email : s.signedIn
+    // accounts"*). Name first (the founder's follow-up: *"it shows my gmail
+    // addr instead of name"*), then email, then the constant as last resort.
+    label.textContent = current === null
+      ? s.signIn
+      : current.name !== ''
+        ? current.name
+        : current.email !== ''
+          ? current.email
+          : s.signedIn
     settingsText.textContent = s.settings
     langText.textContent = s.language
     signOutText.textContent = s.signOut
