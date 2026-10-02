@@ -567,10 +567,16 @@ app.whenReady().then(() => {
   // founder's mitsumeru:// link was answered by DaVinci Resolve's hidden
   // Electron). The pending flush covers a link delivered while the app was
   // still starting.
+  // The outcome is logged because a dev registration is invisible otherwise:
+  // measured 2026-10-02 that a bare/failed registration leaves macOS with no
+  // handler, and the open-with dialog then offers unrelated Electron apps
+  // (DaVinci Resolve's hidden Electron answered the founder's link).
   if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(AUTH_SCHEME, process.execPath, [resolve(process.argv[1])])
+    const registered = app.setAsDefaultProtocolClient(AUTH_SCHEME, process.execPath, [resolve(process.argv[1])])
+    log(`auth-protocol-registered pair=true defaultApp=true argv1=${process.argv[1]} ok=${String(registered)}`)
   } else {
-    app.setAsDefaultProtocolClient(AUTH_SCHEME)
+    const registered = app.setAsDefaultProtocolClient(AUTH_SCHEME)
+    log(`auth-protocol-registered pair=false defaultApp=${String(process.defaultApp)} ok=${String(registered)}`)
   }
   auth = startAuth({
     log,
