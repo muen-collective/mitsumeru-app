@@ -6,8 +6,11 @@
 #   - pnpm's workspace layout is a symlink farm (deps are siblings in the
 #     virtual store), and electron-builder copies resources as plain files, so
 #     the tree is materialized with the hoisted linker instead of copied.
-#   - the harness is executed by node as a child process, so nothing about it
-#     may live inside an asar archive (asar: false in electron-builder.yml).
+#   - the harness is spawned as a child process whose cwd is a directory INSIDE
+#     this tree, and the plugin linker realpaths symlinks out of it. Both are
+#     paths the OS kernel has to resolve, and a path inside an asar archive
+#     fails with ENOTDIR, so this tree ships loose (asar: false in
+#     electron-builder.yml; measured 2026-09-30).
 #
 # The staged install is pinned (overrides) to the closure the dev smoke signs
 # off on — the workspace's own resolved set — and the result is checked back
@@ -176,18 +179,16 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # muen-plugins and vendored here so ensureProfile can symlink it into the profile
 # on first boot.
 #
-# SEVEN packages as of 0.2.1, when the four Kun-parity quality-of-life plugins
-# joined the set: dsh-turn-summary, dsh-changes-card, dsh-codex-fold and
-# dsh-context-watchdog. All four are Client-only surfaces with empty Host halves
-# (each lib/index.js says why), developed as workspace links in the dev profile
-# and promoted to muen-plugins for this release. They are listed here in the order
-# the dev profile composes them — context-watchdog, turn-summary, changes-card,
-# codex-fold — so the shipped composition is the one that was dogfooded.
-#
-# dsh-codex-fold is a localized fork of the community dsh-auto-collapse 0.2.1
-# (MIT). That community package is deliberately NOT shipped and must not be: both
-# fold the same runs, so shipping the pair double-folds one conversation. Its
-# LICENSE and FORK.md travel with the vendored copy for that reason.
+# FIVE packages after the 2026-10-02 retirement. Of the four Kun-parity QOL
+# plugins that joined the set at 0.2.1, dsh-turn-summary and dsh-codex-fold
+# were retired against the 0.2.0-rc.2 harness (codex-fold is redundant with the
+# native Work details feature; turn-summary shadows the native turn-process
+# node) — SHIPPED_PLUGINS / RETIRED_PLUGINS in src/main/harness.ts are the
+# authority on what ships. The remaining QOL pair, dsh-context-watchdog and
+# dsh-changes-card, are Client-only surfaces with empty Host halves (each
+# lib/index.js says why), developed as workspace links in the dev profile and
+# promoted to muen-plugins; staged here in the order the dev profile composes
+# them.
 #
 # dsh-eva-theme is here for the same reason the brand plugin is: its
 # cordis.patch.yml inserts the loader row, and being present on disk is not the
@@ -195,7 +196,7 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # seed module words — see the COMPATIBILITY note at the top of its
 # lib/client.tpl.js for the measured list and the one import that broke in
 # DSH Desktop 2.0.4.
-for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdog dsh-turn-summary dsh-changes-card dsh-codex-fold; do
+for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdog dsh-changes-card; do
   src="plugins/$pkg"
   [ -d "$src" ] || { echo "[FAIL] shipped plugin missing: $src"; exit 1; }
   dest="$OUT/node_modules/@muen/$pkg"

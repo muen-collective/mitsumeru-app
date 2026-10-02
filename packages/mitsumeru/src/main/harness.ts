@@ -31,16 +31,12 @@ const SHIPPED_PLUGINS = [
   '@muen/dsh-brand-mitsumeru',
   '@muen/dsh-eva-theme',
   '@muen/dsh-white-label',
-  // The four Kun-parity quality-of-life plugins, shipped from 0.2.1. Vendored by
-  // prepare-harness.sh; composed in the order the dev profile ran them, so the
-  // shipped composition is the one that was dogfooded. None of them replaces a
-  // community package this app ships — codex-fold's upstream (dsh-auto-collapse)
-  // is deliberately absent, because two folds over one conversation is a double
-  // fold.
+  // The Kun-parity quality-of-life set, shipped from 0.2.1; two of the four
+  // retired 2026-10-02 (see RETIRED_PLUGINS). What remains are Client-only
+  // surfaces with empty Host halves, vendored by prepare-harness.sh and
+  // composed in the order the dev profile ran them.
   '@muen/dsh-context-watchdog',
-  '@muen/dsh-turn-summary',
   '@muen/dsh-changes-card',
-  '@muen/dsh-codex-fold',
 ]
 
 /**
@@ -57,8 +53,18 @@ const SHIPPED_PLUGINS = [
  * wants those same tokens, so shipping both means two layers competing per-token
  * with mount order deciding the winner. Its source stays in `plugins/`; it is
  * simply not vendered into a build.
+ *
+ * `@muen/dsh-codex-fold` + `@muen/dsh-turn-summary` dropped 2026-10-02 on the
+ * founder's call against the 0.2.0-rc.2 harness: codex-fold is redundant with
+ * the native Work details feature, and turn-summary shadows the harness's own
+ * `turn-process` node in a keyed slot (priority -1). Sources stay in
+ * muen-plugins; they are simply not vendered into a build.
  */
-const RETIRED_PLUGINS = ['@muen/dsh-mitsumeru-appearance']
+const RETIRED_PLUGINS = [
+  '@muen/dsh-mitsumeru-appearance',
+  '@muen/dsh-codex-fold',
+  '@muen/dsh-turn-summary',
+]
 
 /**
  * Ensure our profile exists before booting it, because dsh does NOT create a
@@ -140,6 +146,14 @@ function ensureProfile(stateDir: string, pluginNames: string[], harnessRoot: str
   for (const name of pluginNames) {
     const depTarget = join(harnessRoot, 'node_modules', name)
     if (existsSync(depTarget)) dependencies[name] = `link:${depTarget}`
+  }
+  // Retired packages leave the manifest and the link directory too: the bundles
+  // filter drops them from composition, this drops them from `installed`
+  // (listBundles keys off dependencies), and a stale symlink would otherwise
+  // keep resolving for anything that still looks for it.
+  for (const name of RETIRED_PLUGINS) {
+    delete dependencies[name]
+    rmSync(join(profileDir, 'node_modules', name), { recursive: true, force: true })
   }
   writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2) + '\n')
 
