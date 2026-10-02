@@ -8,7 +8,7 @@ import {
   shell,
   type MenuItemConstructorOptions
 } from 'electron'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { spawnHarness, harnessPaths, type HarnessSession } from './harness'
 import { startUpdater, type UpdaterController } from './updater'
@@ -559,11 +559,19 @@ app.whenReady().then(() => {
       }
     })
   }
-  // Epic 92: Muen sign-in. setAsDefaultProtocolClient covers dev runs; the
-  // packaged registration is CFBundleURLTypes from electron-builder's
-  // `protocols` entry. The pending flush covers a link delivered while the app
-  // was still starting.
-  app.setAsDefaultProtocolClient(AUTH_SCHEME)
+  // Epic 92: Muen sign-in. The packaged registration is CFBundleURLTypes from
+  // electron-builder's `protocols` entry. A dev run must register the PAIR
+  // (binary + app entry): a bare registration lets a cold deep link launch
+  // Electron with no app — the default welcome window — and lets any stray
+  // Electron on the machine answer the scheme (measured 2026-10-02: the
+  // founder's mitsumeru:// link was answered by DaVinci Resolve's hidden
+  // Electron). The pending flush covers a link delivered while the app was
+  // still starting.
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(AUTH_SCHEME, process.execPath, [resolve(process.argv[1])])
+  } else {
+    app.setAsDefaultProtocolClient(AUTH_SCHEME)
+  }
   auth = startAuth({
     log,
     isTrustedSender: isHarnessNavigation,
