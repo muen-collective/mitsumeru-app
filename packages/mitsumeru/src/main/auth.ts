@@ -11,10 +11,12 @@ import type { AuthSession, MuenUser } from '../shared/auth'
  * identity proof, the shell only trades the resulting code for a session and
  * keeps it.
  *
- * Flow:
- *   signIn()  → browser to <origin>/api/auth/github?redirect_uri=mitsumeru://auth/callback
- *   server    → redirects to mitsumeru://auth/callback?code=...  (deep link)
- *   handleDeepLink() → POST /api/auth/exchange { code } → { token, user }
+ * Flow (entry per the 0.2.6 pivot call 5, 2026-09-30 — Clerk hosted on the Muen
+ * site; the exchange contract below is unchanged, per decision 65):
+ *   signIn()  → browser to <origin>/sign-in?client=mitsumeru
+ *   the site  → after Clerk sign-in, mints a short code and redirects to
+ *               mitsumeru://auth/callback?code=...  (deep link)
+ *   handleDeepLink() → POST /api/auth/exchange { code, redirectUri } → { token, user }
  *   session   → encrypted on disk (safeStorage: macOS Keychain-backed),
  *               pushed to the window as mitsumeru:auth-changed
  *
@@ -149,7 +151,9 @@ export function startAuth(options: AuthOptions): AuthController {
   // ---- actions --------------------------------------------------------------
 
   const signIn = (): void => {
-    const url = `${origin}/api/auth/github?redirect_uri=${encodeURIComponent(`${AUTH_SCHEME}://auth/callback`)}`
+    // The sign-in route, not the homepage, and the client= marker tells the
+    // site this sign-in must complete the app round-trip (mint + deep link).
+    const url = `${origin}/sign-in?client=mitsumeru`
     log(`auth-open-browser ${url}`)
     void shell.openExternal(url)
   }

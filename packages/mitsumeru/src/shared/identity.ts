@@ -53,12 +53,17 @@ export const UPDATE_FEED_URL = `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO
 export const HARNESS_PACKAGE = '@deepseek-ai/dsh'
 
 /**
- * Muen sign-in (Epic 92). Where the OAuth server lives and the deep-link
- * scheme it redirects back to. The default origin is the org's existing site —
- * Epic 92 Q2 (dedicated auth host vs mitsumeru.vercel.app) is still open, so a
- * run can point elsewhere with MITSUMERU_AUTH_ORIGIN without rebuilding.
+ * Muen sign-in (Epic 92). Where the sign-in server lives and the deep-link
+ * scheme it redirects back to.
+ *
+ * Decided 2026-09-30 (0.2.6 pivot, call 5): the origin is the deployed **Muen
+ * marketing site** (`muen-site.vercel.app`), opened at its sign-in route —
+ * never the homepage — so the round-trip is bounded and the name the user
+ * meets at click time ("Sign in to Muen") matches the site they land on. The
+ * runtime override stays for dev runs: MITSUMERU_AUTH_ORIGIN points a build
+ * elsewhere without rebuilding.
  */
-export const AUTH_ORIGIN = 'https://mitsumeru.vercel.app'
+export const AUTH_ORIGIN = 'https://muen-site.vercel.app'
 export const AUTH_SCHEME = 'mitsumeru'
 
 /**
