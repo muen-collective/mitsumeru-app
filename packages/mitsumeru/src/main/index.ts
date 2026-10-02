@@ -56,6 +56,8 @@ const clickProbe = process.env.MITSUMERU_CLICK_PROBE === '1'
 let mainWindow: BrowserWindow | null = null
 let updater: UpdaterController | null = null
 let session_harness: HarnessSession | null = null
+/** First-install gate: the harness exists only behind a session (no anonymous use). */
+let harnessStarted = false
 let harnessLogPath = ''
 let harnessOrigin = '' // set once the readiness URL is known; navigation fence
 let harnessUiLoaded = false
@@ -115,6 +117,19 @@ function isHarnessNavigation(url: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Who may ask the auth IPC. The gate page is this shell's own static renderer
+ * (file:// packaged, the dev origin in dev) — it is the one caller that is
+ * neither the harness nor an http page, so file:// is exactly the allowance
+ * and nothing else is added. Until the harness starts (and again after
+ * sign-out resets `harnessOrigin`) the dev renderer passes
+ * `isHarnessNavigation` unchanged.
+ */
+function isAuthTrustedSender(url: string): boolean {
+  if (url.startsWith('file:')) return true
+  return isHarnessNavigation(url)
 }
 
 function createSplashWindow(): BrowserWindow {
@@ -273,6 +288,7 @@ function loadSplash(): void {
 }
 
 async function startHarnessAndLoad(): Promise<void> {
+  harnessStarted = true
   // State lives under Electron's userData (Epic 86 T8: pick once, never rename).
   const stateDir = process.env.MITSUMERU_DSH_HOME ?? join(app.getPath('userData'), 'mitsu-dsh')
   const logDir = process.env.MITSUMERU_LOG_DIR ?? join(app.getPath('userData'), 'logs')
@@ -580,10 +596,28 @@ app.whenReady().then(() => {
   }
   auth = startAuth({
     log,
-    isTrustedSender: isHarnessNavigation,
+    isTrustedSender: isAuthTrustedSender,
     onSessionChange: (session) => {
       if (mainWindow !== null && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
         mainWindow.webContents.send('mitsumeru:auth-changed', session?.user ?? null)
+      }
+      // First-install gate (direction 2026-10-02: no anonymous use — every
+      // install signs in): the harness exists only behind a session. A session
+      // arriving (sign-in, or the deep-link exchange) starts it once; an
+      // explicit sign-out stops it and returns to the gate.
+      if (session !== null) {
+        if (!harnessStarted) {
+          log('gate-passed session present, starting harness')
+          void startHarnessAndLoad()
+        }
+      } else if (harnessStarted) {
+        log('signed-out returning to gate')
+        harnessStarted = false
+        harnessOrigin = ''
+        harnessUiLoaded = false
+        session_harness?.stop('sign-out')
+        session_harness = null
+        loadSplash()
       }
     }
   })
@@ -594,7 +628,18 @@ app.whenReady().then(() => {
   }
   mainWindow = createSplashWindow()
   loadSplash()
-  void startHarnessAndLoad()
+  // The gate: no session, no harness (direction 2026-10-02 — every install
+  // signs in; free and pro are the two user types behind it). Verification
+  // modes (smoke + the two probes) bypass it — they exercise the harness, not
+  // an account, and no test holds a session.
+  if (smoke || lockdownProbe || clickProbe) {
+    log('gate-bypass verification mode')
+    void startHarnessAndLoad()
+  } else if (auth.session() !== null) {
+    void startHarnessAndLoad()
+  } else {
+    log('gate-signin-required (no session)')
+  }
 
   if (smoke) {
     // Auto-quit once the harness UI reported loaded (or after a hard cap so a
