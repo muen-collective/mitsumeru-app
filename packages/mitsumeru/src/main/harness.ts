@@ -128,6 +128,19 @@ function ensureProfile(stateDir: string, pluginNames: string[], harnessRoot: str
     )
   ]
   profile.patchReload ??= 'live'
+  // The Plugins page reads `installed` from these keys: dsh-plugin-manager's
+  // listBundles computes `installed = Object.keys(manifest.dependencies)` — a
+  // shipped plugin present in `bundles` + node_modules but absent here answers
+  // installed:false, and the page filters it out of every group (measured
+  // 2026-10-02 on a fresh profile: all seven @muen bundles composed and serving
+  // their clients while the page showed only Official). Same recompute rule as
+  // `bundles`: the app owns these entries, the spec points at the harness tree
+  // the links below already use, so an app that moves repairs itself on boot.
+  const dependencies = (manifest.dependencies ??= {}) as Record<string, string>
+  for (const name of pluginNames) {
+    const depTarget = join(harnessRoot, 'node_modules', name)
+    if (existsSync(depTarget)) dependencies[name] = `link:${depTarget}`
+  }
   writeFileSync(manifestPath, JSON.stringify(manifest, undefined, 2) + '\n')
 
   const patchPath = join(profileDir, 'cordis.patch.yml')
