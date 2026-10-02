@@ -72,6 +72,7 @@ function avatarPageScript(): void {
     en: {
       signIn: 'Sign in to Muen',
       signedIn: 'Signed in to Muen',
+      settings: 'Settings',
       language: 'Language',
       signOut: 'Sign out',
       switchFailed: 'Could not switch language — try again'
@@ -79,6 +80,7 @@ function avatarPageScript(): void {
     zh: {
       signIn: '登录 Muen',
       signedIn: '已登录 Muen',
+      settings: '设置',
       language: '语言',
       signOut: '退出登录',
       switchFailed: '语言切换失败 — 请重试'
@@ -129,12 +131,6 @@ function avatarPageScript(): void {
   root.style.left = '16px'
   root.style.bottom = '16px'
   root.style.zIndex = '2147483647'
-  // Account row above, ··· More below (the DeepSeek Desktop footer pattern,
-  // founder 2026-10-02: "remove settings slot and make it like deepseek app").
-  root.style.display = 'flex'
-  root.style.flexDirection = 'column'
-  root.style.gap = '6px'
-  root.style.alignItems = 'flex-start'
 
   const style = document.createElement('style')
   style.textContent = `
@@ -202,14 +198,6 @@ function avatarPageScript(): void {
       display: none; padding: 6px 10px; color: #ff6b6b; font-size: 12px;
     }
     #${ROOT_ID} .mua-error[data-on='1'] { display: block; }
-    #${ROOT_ID} .mua-more {
-      height: 30px; padding: 0 10px;
-      border: 0; border-radius: 6px;
-      background: transparent; color: #9a9a9a;
-      font: inherit; font-size: 12.5px; cursor: pointer;
-      display: flex; align-items: center; gap: 7px;
-    }
-    #${ROOT_ID} .mua-more:hover { background: rgba(255, 255, 255, 0.06); color: #f2f2f2; }
     #${ROOT_ID} .mua-key { color: #606060; font-size: 12px; }
     /* The stock settings rail is the "settings slot" the founder removed
        (2026-10-02): hidden by its stable slot name, never the hashed class.
@@ -285,22 +273,8 @@ function avatarPageScript(): void {
   const signOutText = document.createElement('span')
   signOut.appendChild(signOutText)
 
-  menu.append(langItem, sub, errorLine, sep, signOut)
-
-  const moreBtn = document.createElement('button')
-  moreBtn.className = 'mua-more'
-  moreBtn.type = 'button'
-  moreBtn.setAttribute('aria-haspopup', 'menu')
-  moreBtn.setAttribute('aria-expanded', 'false')
-  const moreDots = document.createElement('span')
-  moreDots.textContent = '···'
-  const moreText = document.createElement('span')
-  moreText.textContent = 'More'
-  moreBtn.append(moreDots, moreText)
-
-  const moreMenu = document.createElement('div')
-  moreMenu.className = 'mua-menu'
-  moreMenu.setAttribute('role', 'menu')
+  const sepTop = document.createElement('hr')
+  sepTop.className = 'mua-sep'
 
   const settingsItem = document.createElement('button')
   settingsItem.className = 'mua-item'
@@ -313,22 +287,24 @@ function avatarPageScript(): void {
   settingsKey.textContent = '⌘,'
   settingsItem.append(settingsText, settingsKey)
   settingsItem.addEventListener('click', () => {
-    setMore(false)
+    setMenu(false)
     // The stock launcher is only hidden, not removed: a programmatic click
     // runs its handler and opens the harness's own settings dialog.
     const stock = document.querySelector('[data-slot="settings.launcher"] button')
     if (stock instanceof HTMLButtonElement) stock.click()
   })
-  moreMenu.append(settingsItem)
 
-  root.append(style, row, menu, moreBtn, moreMenu)
+  // Settings rides the account menu (founder, 2026-10-02: "remove more... and
+  // put settings inside the avatar's menu") — first item, above Language;
+  // the stock gear rail stays hidden.
+  menu.append(settingsItem, sepTop, langItem, sub, errorLine, sep, signOut)
+  root.append(style, row, menu)
   ;(document.body ?? document.documentElement).appendChild(root)
 
   // ---- state + behaviour ---------------------------------------------------
 
   let current: MuenUser | null = null
   let menuOpen = false
-  let moreOpen = false
   let subOpen = false
   /** The id this session's successful switch claimed; see currentLang(). */
   let langOverride: string | null = null
@@ -340,6 +316,7 @@ function avatarPageScript(): void {
     // accounts"* — a label identical for every identity can never distinguish
     // them). Email first; the constant stays as the empty-email fallback.
     label.textContent = current === null ? s.signIn : current.email !== '' ? current.email : s.signedIn
+    settingsText.textContent = s.settings
     langText.textContent = s.language
     signOutText.textContent = s.signOut
     errorLine.textContent = s.switchFailed
@@ -359,12 +336,6 @@ function avatarPageScript(): void {
     sub.dataset.open = subOpen ? '1' : '0'
     errorLine.dataset.on = '0'
     row.setAttribute('aria-expanded', String(open))
-  }
-
-  const setMore = (open: boolean): void => {
-    moreOpen = open
-    moreMenu.dataset.open = open ? '1' : '0'
-    moreBtn.setAttribute('aria-expanded', String(open))
   }
 
   const pickLocale = async (id: string): Promise<void> => {
@@ -408,15 +379,8 @@ function avatarPageScript(): void {
       void auth.signIn?.()
       return
     }
-    setMore(false)
     setMenu(!menuOpen)
     if (menuOpen) markChecked()
-  })
-
-  moreBtn.addEventListener('click', () => {
-    const next = !moreOpen
-    setMenu(false)
-    setMore(next)
   })
 
   // Outside click and Esc close the menu (a menu that cannot be dismissed is
@@ -424,18 +388,13 @@ function avatarPageScript(): void {
   document.addEventListener(
     'click',
     (event) => {
-      if (!menuOpen && !moreOpen) return
-      if (event.target instanceof Node && !root.contains(event.target)) {
-        setMenu(false)
-        setMore(false)
-      }
+      if (!menuOpen) return
+      if (event.target instanceof Node && !root.contains(event.target)) setMenu(false)
     },
     true
   )
   document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return
-    if (menuOpen) setMenu(false)
-    if (moreOpen) setMore(false)
+    if (event.key === 'Escape' && menuOpen) setMenu(false)
   })
 
   // ---- auth state ----------------------------------------------------------
