@@ -25,6 +25,20 @@ import type { MuenUser } from '../shared/auth'
  * the shell's keychain session and a DSH plugin cannot reach it. Injected after
  * harness load; the page script is self-contained — it is stringified into
  * `executeJavaScript` and must not reference anything outside its body.
+ *
+ * Two load-bearing details below keep this row's DESIGN attached, and both were
+ * earned by the same incident (measured 2026-10-03, founder's report: the
+ * account row "lost its UI design — plain text + large image thumbnail" after
+ * uninstalling a plugin; only an app restart brought it back):
+ *
+ *   1. The stylesheet carries an ownership tag. The harness's client module
+ *      system claims every untagged `<style>` in the document for the plugin
+ *      bundle materializing at that moment, then deletes that style when the
+ *      plugin is removed. Untagged, this stylesheet was stolen by whichever
+ *      plugin bundle materialized after injection — and died with it.
+ *   2. The stylesheet and the root re-attach themselves if anything detaches
+ *      them. Injection happens once per harness page load, so any DOM cleanup
+ *      that removed either used to be permanent until the app restarted.
  */
 
 /** Idempotent: a full reload re-injects, a duplicate call does not double up. */
@@ -133,25 +147,35 @@ function avatarPageScript(): void {
   root.style.zIndex = '2147483647'
 
   const style = document.createElement('style')
+  // OWNERSHIP TAG (see the module doc). The harness's client module system
+  // claims style:not([data-plugin]) for whichever plugin bundle is materializing
+  // — dsh-client-modules claimStyles(), "any untagged tag is claimed for the
+  // materializing plugin (HMR bookkeeping)" — and removeOwnedStyles() then
+  // deletes style[data-plugin=<that plugin>] when the plugin is removed,
+  // replaced or pruned. Owning the tag ourselves is the hook the module system
+  // leaves for exactly this: it never claims a tagged tag, and it only deletes a
+  // tag equal to a plugin's own id. `mitsumeru-shell` is ours, so no plugin id
+  // can equal it.
+  style.setAttribute('data-plugin', 'mitsumeru-shell')
+  style.setAttribute('data-plugin-css', 'mitsumeru-avatar-overlay')
   style.textContent = `
     #${ROOT_ID} {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 13px; color: #f2f2f2;
+      font-size: 13px; color: var(--dsw-alias-label-primary, #f2f2f2);
     }
     #${ROOT_ID} .mua-row {
       display: flex; align-items: center; gap: 10px;
       height: 40px; padding: 0 10px 0 4px;
       border: 0; border-radius: 20px;
-      background: transparent; color: #f2f2f2;
+      background: transparent; color: var(--dsw-alias-label-primary, #f2f2f2);
       font: inherit; cursor: pointer;
     }
     #${ROOT_ID} .mua-row:hover { background: rgba(255, 255, 255, 0.06); }
     #${ROOT_ID} .mua-avatar {
       position: relative; width: 32px; height: 32px; flex: none;
-      border-radius: 50%; background: #191a1a;
-      border: 1px solid #3a3b3b; overflow: visible;
+      border-radius: 50%; background: #191a1a; overflow: visible;
       font-size: 14px; font-weight: 700; line-height: 30px;
-      text-align: center;
+      text-align: center; color: #f2f2f2;
     }
     #${ROOT_ID} .mua-avatar img {
       position: absolute; inset: 0; width: 32px; height: 32px;
@@ -299,7 +323,21 @@ function avatarPageScript(): void {
   // the stock gear rail stays hidden.
   menu.append(settingsItem, sepTop, langItem, sub, errorLine, sep, signOut)
   root.append(style, row, menu)
-  ;(document.body ?? document.documentElement).appendChild(root)
+  const host = document.body ?? document.documentElement
+  host.appendChild(root)
+
+  // SELF-HEALING (see the module doc). Injection runs once per harness page
+  // load, so without this, any DOM cleanup that detaches the root or the
+  // stylesheet leaves the row unstyled until the app restarts. Two narrow
+  // observers — the body's direct children, the root's direct children — keep
+  // this off the SPA's own mutation traffic.
+  const ensureAttached = (): void => {
+    const container = document.body ?? document.documentElement
+    if (root.parentNode !== container) container.appendChild(root)
+    if (style.parentNode !== root) root.prepend(style)
+  }
+  new MutationObserver(ensureAttached).observe(host, { childList: true })
+  new MutationObserver(ensureAttached).observe(root, { childList: true })
 
   // ---- state + behaviour ---------------------------------------------------
 
