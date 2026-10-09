@@ -78,6 +78,14 @@ function bannerPageScript(feedUrl: string): void {
   root.style.display = 'none'
 
   const style = document.createElement('style')
+  // OWNERSHIP TAG — same defect as the account row, same fix; see the long note
+  // in avatar-overlay.ts. The harness's client module system claims every
+  // untagged <style> for whichever plugin bundle materializes next and deletes
+  // style[data-plugin=<that plugin>] when that plugin goes away, which would
+  // strip this strip's CSS (animation, sizing, buttons) and leave it as raw
+  // text and full-size controls until the app restarted.
+  style.setAttribute('data-plugin', 'mitsumeru-shell')
+  style.setAttribute('data-plugin-css', 'mitsumeru-update-banner')
   style.textContent = `
     #${ROOT_ID} { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #f2f2f2; }
     #${ROOT_ID} .mub-bar {

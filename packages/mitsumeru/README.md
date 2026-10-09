@@ -67,9 +67,14 @@ pnpm package:mac     # release/*.dmg + *.zip
 
 Four things make the packaged app different from `pnpm start`:
 
-- **`asar: false`.** The harness is executed by node as a child process, so its files
-  cannot live inside an asar archive. electron-builder warns about this; the warning is
-  the design.
+- **`asar: false`.** asar is a Node-level path shim, not a real filesystem. Electron can
+  require() and read files inside an archive, but any path handed to the OS kernel fails
+  with ENOTDIR (measured 2026-09-30, Electron 44 under `ELECTRON_RUN_AS_NODE`: `chdir` into
+  the archive fails, and so does `spawn()` with `cwd` set inside it). The harness does both:
+  the harness package root IS the spawn `cwd`, and the plugin linker realpaths symlinks out
+  of `harnessRoot/node_modules`. A second, independent reason: native addons and real
+  executables must be real files regardless. electron-builder warns about the missing
+  archive; the warning is the design.
 - **The harness travels as a resource, not as app dependencies.** `scripts/prepare-harness.sh`
   materializes the published closure into `Resources/harness/node_modules/` — a real-file,
   symlink-free tree (hoisted linker), because electron-builder copies resources as plain

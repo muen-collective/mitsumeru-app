@@ -1,8 +1,16 @@
 # Packaging config for mitsumeru (Epic 86 T9).
 #
 # Two constraints drive everything here:
-#   1. asar: false — the harness is executed by node as a child process, so its
-#      files cannot live inside an archive.
+#   1. asar: false. asar is a Node-level path shim, not a real filesystem:
+#      Electron can require() and read files inside an archive, but any path
+#      handed to the OS kernel fails with ENOTDIR. Measured 2026-09-30 on
+#      Electron 44 under ELECTRON_RUN_AS_NODE: chdir into the archive fails,
+#      and so does spawn() with cwd set inside it. harness.ts does both (the
+#      harness package root IS the spawn cwd, and the plugin linker realpaths
+#      symlinks out of harnessRoot/node_modules), so the tree ships loose.
+#      Separate reason, same conclusion: native addons and real executables
+#      must be real files, which is why the official app still unpacks 216 MB
+#      next to its 116 MB app.asar.
 #   2. npmRebuild: false — nothing in app/ is native; the harness travels as a
 #      resource tree built by scripts/prepare-harness.sh.
 appId: com.muen.mitsumeru

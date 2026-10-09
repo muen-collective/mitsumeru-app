@@ -2,7 +2,7 @@
   "name": "mitsumeru",
   "productName": "Mitsumeru",
   "version": "0.2.5-dev",
-  "description": "Mitsumeru \u2014 our own Electron shell around a DSH release. Epic 86 Track B.",
+  "description": "Mitsumeru — our own Electron shell around a DSH release. Epic 86 Track B.",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
@@ -28,6 +28,8 @@
     "notarize:all": "pnpm notarize:x64 && pnpm notarize:arm64 && pnpm manifest:merge",
     "manifest:merge": "node scripts/merge-mac-manifest.mjs",
     "store:credentials": "bash scripts/store-notary-credentials.sh",
+    "bump": "bash scripts/bump-version.sh",
+    "release:cut": "bash scripts/release-cut.sh",
     "verify:release": "bash scripts/verify-release.sh",
     "verify:artifacts": "bash scripts/verify-artifacts.sh",
     "verify:arch": "bash scripts/verify-arch.sh",
@@ -49,7 +51,7 @@
     "frameless:check": "node_modules/.bin/electron scripts/frameless-check.cjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-alpha.1",
+    "@deepseek-ai/dsh": "0.2.1-alpha.2",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
