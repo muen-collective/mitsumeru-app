@@ -319,3 +319,14 @@ if (drifted.length > 0) {
 # on 2026-09-17. A failed build here is the point.
 node patches/patch-hero-brand-tagline.mjs --harness "$OUT" --no-backup
 node scripts/verify-hero-tagline.mjs --harness "$OUT"
+
+# The Experimental badge on the Plugins page. Upstream derives it from one
+# name-prefix check (`beta: pkg.name.startsWith("@deepseek-ai/dsh-experimental-")`
+# in the plugin-manager client), never from a manifest field, so `@muen/*`
+# packages can never match it. Founder call (2026-10-10): badge our plugins the
+# same way "for consistency". The patch adds the `@muen/` scope to that one
+# predicate — same Tag, same tone, already-translated `statusBeta` string — and
+# runs here, on the staged tree, so the rule is inside the signature (same
+# reason, same contract as the hero patch above).
+node patches/patch-muen-beta-badge.mjs --harness "$OUT" --no-backup
+node patches/patch-muen-beta-badge.mjs --harness "$OUT" --check
