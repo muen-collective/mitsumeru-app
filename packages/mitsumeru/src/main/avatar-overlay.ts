@@ -63,6 +63,8 @@ export function injectAvatarOverlay(win: BrowserWindow, log: (message: string) =
  */
 function avatarPageScript(): void {
   const ROOT_ID = 'mitsumeru-avatar-overlay'
+  /** The harness's own settings rail — the slot this overlay replaces. */
+  const SETTINGS_SLOT = 'sidebar.settings'
   if (document.getElementById(ROOT_ID) !== null) return
 
   interface AuthBridge {
@@ -225,8 +227,9 @@ function avatarPageScript(): void {
     #${ROOT_ID} .mua-key { color: #606060; font-size: 12px; }
     /* The stock settings rail is the "settings slot" the founder removed
        (2026-10-02): hidden by its stable slot name, never the hashed class.
-       The BUTTON stays in the DOM — our menu clicks it and Alt+Meta+, keeps
-       resolving — it is only drawn out of the rail. */
+       The BUTTON stays in the DOM and keeps its live rect, which is what our menu
+       opens Settings through — it is only drawn out of the rail (module doc:
+       Settings rides the account menu). */
     div:has(> [data-slot="sidebar.settings"]) { display: none !important; }
   `
 
@@ -312,10 +315,74 @@ function avatarPageScript(): void {
   settingsItem.append(settingsText, settingsKey)
   settingsItem.addEventListener('click', () => {
     setMenu(false)
-    // The stock launcher is only hidden, not removed: a programmatic click
-    // runs its handler and opens the harness's own settings dialog.
-    const stock = document.querySelector('[data-slot="settings.launcher"] button')
-    if (stock instanceof HTMLButtonElement) stock.click()
+    // Open Settings by driving the harness's OWN account menu.
+    //
+    // Three routes were tried in the running app (2026-10-12); only the last works:
+    //
+    //   1. Clicking the settings launcher directly. Our stylesheet hides its
+    //      container, and a hidden element measures 0x0 — and that launcher IS the
+    //      account menu's anchor, so the menu opened clamped at the window's
+    //      top-left. This was the founder's *"another menu pops up top left"*.
+    //      Measured `{x:0, y:0, w:0, h:0}` in both rail states.
+    //   2. Driving the harness command `settings.open` over the native bridge. The
+    //      command IS registered (inside the `sidebar.settings` slot injection) and
+    //      the input arrives with a matching revision, yet nothing opens — slots
+    //      are isolated, so it never lands in the registry the keyboard path
+    //      dispatches against. Verified: `invokeCommand` true, `modalCount` 0.
+    //   3. THIS: reveal the slot's OUTER wrapper (never the launcher alone, so no
+    //      hidden ancestor can pinch the rect), let the harness open its own menu,
+    //      then click the Settings row IT renders — which is exactly what a person
+    //      clicking that row does. Verified in the live app: the dialog opens
+    //      centred (`{x:672, y:203, w:800, h:800}`, `data-shortcut-modal="settings"`).
+    //
+    // The second click must wait for the harness menu to render, and the wait cannot
+    // be a fixed number of frames: it is React work scheduled off the first click.
+    // Poll for the row instead, with a bounded give-up so a harness that changes
+    // its markup leaves nothing hidden behind.
+    // A temporary veil hides that intermediate menu so the two-step hop is
+    // invisible. It hides, it does not disable: `.click()` still fires on a
+    // `visibility: hidden` element, which is why the veil is safe.
+    const slot = document.querySelector('[data-slot="' + SETTINGS_SLOT + '"]')
+    const outer = slot instanceof HTMLElement ? slot.parentElement : null
+    if (!(slot instanceof HTMLElement) || outer === null) return
+    const savedOuter = outer.getAttribute('style')
+    const veil = document.createElement('style')
+    veil.textContent =
+      '[role="menu"]:not(#' + ROOT_ID + ' [role="menu"]) { visibility: hidden !important; }'
+    document.head.append(veil)
+    outer.style.setProperty('display', 'contents', 'important')
+    // The style attribute has to read back so React's layout listener sees the
+    // change and the fresh rect exists before the click.
+    void slot.offsetHeight
+    const launcher = slot.querySelector('button')
+    if (launcher === null) {
+      veil.remove()
+      outer.style.setProperty('display', 'none', 'important')
+      return
+    }
+    launcher.click()
+    let tries = 0
+    const hop = (): void => {
+      const row = [...document.querySelectorAll('button')].find(
+        (b) => (b.textContent ?? '').trim().toLowerCase().startsWith('settings') && !b.closest('#' + ROOT_ID)
+      )
+      if (row !== undefined) {
+        row.click()
+        veil.remove()
+        if (savedOuter === null) outer.removeAttribute('style')
+        else outer.setAttribute('style', savedOuter)
+        return
+      }
+      // ~1s at 60fps, then give up and put the rail back.
+      if (tries++ < 60) {
+        requestAnimationFrame(hop)
+        return
+      }
+      veil.remove()
+      if (savedOuter === null) outer.removeAttribute('style')
+      else outer.setAttribute('style', savedOuter)
+    }
+    requestAnimationFrame(hop)
   })
 
   // Settings rides the account menu (founder, 2026-10-02: "remove more... and

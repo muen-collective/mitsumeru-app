@@ -15,6 +15,9 @@ import { startUpdater, type UpdaterController } from './updater'
 import { injectUpdateBanner } from './update-banner'
 import { startAuth, type AuthController } from './auth'
 import { injectAvatarOverlay } from './avatar-overlay'
+import { injectRailCollapse } from './rail-collapse'
+import { installDesktopShortcuts } from './shortcuts-bridge'
+import { installNativeAppearance } from './native-appearance'
 import {
   APP_ID,
   APP_NAME,
@@ -140,6 +143,39 @@ function createSplashWindow(): BrowserWindow {
     // package codename.
     title: PRODUCT_NAME,
     show: false,
+    // Full DSH desktop parity (founder, 2026-10-12: *"i want full parity"*).
+    //
+    // These are the OFFICIAL shell's own darwin options, copied value for value
+    // (`main.js`, the app window): `hiddenInset` + `{x:16, y:18}` +
+    // `vibrancy: 'sidebar'` + `visualEffectState: 'active'` + a fully transparent
+    // window background. They are a matched set, not styling taste:
+    //
+    //   - The harness turns its frame transparent under the mark
+    //     (`[data-platform=darwin] .frame{background:0 0}`) and makes the sidebar
+    //     column a `color-mix(…, transparent)` gradient. **Something native must
+    //     therefore sit behind it** — that is the `sidebar` vibrancy material. On
+    //     a normal opaque window background the sidebar paints as a flat void.
+    //   - `hiddenInset` is what makes the native title bar give up its strip, so
+    //     the 48px band the harness reserves (`--dsh-frame-top-clearance:48px`)
+    //     lines up with the traffic lights instead of fighting them.
+    //
+    // Do NOT "fix" these numbers by eye: the sidebar gradient and the 48px
+    // clearance were authored against exactly this geometry.
+    //
+    // The splash is unaffected in practice — it paints its own opaque black
+    // `body`, which covers the vibrancy layer until the harness loads.
+    //
+    // Windows needs no equivalent here: DSH's Windows path is driven by
+    // `data-windows-titlebar`, which this shell does not set.
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 16, y: 18 },
+          vibrancy: 'sidebar' as const,
+          visualEffectState: 'active' as const,
+          backgroundColor: '#00000000'
+        }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -176,6 +212,12 @@ function createSplashWindow(): BrowserWindow {
       injectUpdateBanner(win, log)
       // Epic 92: same hook, same guard, lower-left corner.
       injectAvatarOverlay(win, log)
+      // The rail collapses all the way to zero. With the desktop mark live this
+      // is already true (see shortcuts-bridge.ts / the preload), so the script
+      // finds nothing to rewrite and does nothing; it stays as the FALLBACK for
+      // the one case the mark cannot be set (the protocol module failing to
+      // load), so the founder's rail keeps collapsing even then.
+      injectRailCollapse(win, log)
     }
   })
 
@@ -302,6 +344,22 @@ async function startHarnessAndLoad(): Promise<void> {
   log(`harness entry=${paths.entry}`)
   log(`harness stateDir=${paths.stateDir}`)
   log(`harness log=${paths.logPath}`)
+
+  // Full DSH desktop parity: the keyboard bridge has to be LIVE before the page
+  // reads the desktop mark, so it is installed here — the first point where both
+  // anchors are known. `installDesktopShortcuts` flips the flag the preload asks
+  // on; if the protocol module cannot load, the flag stays false and the page is
+  // never marked (which keeps today's working app instead of a broken boot).
+  if (mainWindow !== null) {
+    await installDesktopShortcuts(mainWindow, paths.harnessRoot, paths.stateDir, log)
+  }
+
+  // The native appearance mirror: the window's vibrancy material must follow the
+  // APP's theme, not the OS appearance (founder: *"the color is off"*). See
+  // native-appearance.ts for why this is part of the same parity contract.
+  if (mainWindow !== null) {
+    installNativeAppearance(mainWindow, log)
+  }
 
   session_harness = spawnHarness({
     ...paths,
