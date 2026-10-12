@@ -9,7 +9,7 @@ import type { MuenUser } from '../shared/auth'
  *
  *   signed out  -> [M] "Sign in to Muen"   click starts sign-in (browser)
  *   signed in   -> [avatar] "Signed in to Muen"
- *                    click -> menu:  Language > English / 中文
+ *                    click -> menu:  Language > the harness's catalog
  *                                    ─────────
  *                                    Sign out
  *
@@ -18,8 +18,18 @@ import type { MuenUser } from '../shared/auth'
  * over the settings wire it uses — `POST /api/settings/update`,
  * `{args: {ns: 'locale', patch: {preference: id}}}` — which the harness applies
  * live (measured: html lang flips in ~2.5 s, no reload). The preference is the
- * Host user-settings document's `locale.preference` (values `en`/`zh`), so the
- * harness's Settings → General row and this menu always agree.
+ * Host user-settings document's `locale.preference`, so the harness's
+ * Settings → General row and this menu always agree.
+ *
+ * The LANGUAGES are not ours to list either. The harness ships two
+ * (dsh-client-locale: LOCALE_IDS = zh, en) and every other arrives from a plugin
+ * through `addLanguage` — ours come from `@muen/dsh-localize` (ko, ja, fr, de,
+ * es). This menu draws the catalog the harness itself lists, read at open time
+ * from `<html data-muen-languages>` (the mirror that plugin publishes; see its
+ * README), and falls back to the built-in pair when nothing published one — a
+ * stock DSH, or a profile without the plugin. A hardcoded pair here was the bug:
+ * it showed `zh`/`en` to everyone, including the readers of the five languages we
+ * had already added.
  *
  * Shell-owned, same reasoning as the update banner (Epic 91): sign-in state is
  * the shell's keychain session and a DSH plugin cannot reach it. Injected after
@@ -76,12 +86,37 @@ function avatarPageScript(): void {
   const auth = (window as unknown as { mitsumeru?: { auth?: AuthBridge } }).mitsumeru?.auth
   if (auth === undefined || auth.user === undefined || auth.onAuthChange === undefined) return
 
-  // The harness's shipped catalog (dsh-client-locale: LOCALE_IDS = zh, en),
-  // in native names the way every language menu lists them.
-  const LOCALES: Array<{ id: string; label: string }> = [
+  // The languages, read off the page at open time.
+  //
+  // `data-muen-languages` is the harness's catalog as `@muen/dsh-localize`
+  // mirrors it: `[{id,label}]`, in the runtime's own order, the same list the
+  // harness's Settings → General row draws. Absent (a stock DSH, or a profile
+  // without that plugin) the built-in pair is the honest answer, because the
+  // harness ships exactly those two.
+  const BUILT_IN_LOCALES: Array<{ id: string; label: string }> = [
     { id: 'en', label: 'English' },
     { id: 'zh', label: '中文' }
   ]
+  const locales = (): Array<{ id: string; label: string }> => {
+    try {
+      const raw = document.documentElement.dataset.muenLanguages
+      if (raw === undefined || raw === '') return BUILT_IN_LOCALES
+      const parsed: unknown = JSON.parse(raw)
+      if (!Array.isArray(parsed)) return BUILT_IN_LOCALES
+      const rows = parsed.filter(
+        (row): row is { id: string; label: string } =>
+          typeof row === 'object' &&
+          row !== null &&
+          typeof (row as { id?: unknown }).id === 'string' &&
+          (row as { id: string }).id !== '' &&
+          typeof (row as { label?: unknown }).label === 'string'
+      )
+      return rows.length > 0 ? rows : BUILT_IN_LOCALES
+    } catch {
+      // Malformed JSON is a mirror we cannot read, never a menu we do not show.
+      return BUILT_IN_LOCALES
+    }
+  }
   // The overlay speaks both languages too — after a switch its own labels
   // follow, so the menu demonstrates the very thing it switches.
   const STRINGS: Record<string, Record<string, string>> = {
@@ -268,24 +303,39 @@ function avatarPageScript(): void {
 
   const sub = document.createElement('div')
   sub.className = 'mua-sub'
-  const options = LOCALES.map((locale) => {
-    const opt = document.createElement('button')
-    opt.className = 'mua-opt'
-    opt.type = 'button'
-    opt.setAttribute('role', 'menuitemradio')
-    opt.dataset.locale = locale.id
-    const text = document.createElement('span')
-    text.textContent = locale.label
-    const check = document.createElement('span')
-    check.className = 'mua-check'
-    check.textContent = '✓'
-    opt.append(text, check)
-    opt.addEventListener('click', () => {
-      void pickLocale(locale.id)
-    })
-    sub.appendChild(opt)
-    return { id: locale.id, opt }
-  })
+
+  // The rows are built from the live catalog when the submenu opens — not once
+  // at inject time. This script runs as the app boots, before the locale plugin
+  // has offered its languages, so a list captured here would be the two the
+  // harness ships and nothing else.
+  let options: Array<{ id: string; opt: HTMLButtonElement }> = []
+  let rendered = ''
+  const renderOptions = (): void => {
+    const next = locales()
+    const signature = next.map((locale) => locale.id + ':' + locale.label).join('|')
+    if (signature === rendered) return
+    rendered = signature
+    options = []
+    sub.replaceChildren()
+    for (const locale of next) {
+      const opt = document.createElement('button')
+      opt.className = 'mua-opt'
+      opt.type = 'button'
+      opt.setAttribute('role', 'menuitemradio')
+      opt.dataset.locale = locale.id
+      const text = document.createElement('span')
+      text.textContent = locale.label
+      const check = document.createElement('span')
+      check.className = 'mua-check'
+      check.textContent = '✓'
+      opt.append(text, check)
+      opt.addEventListener('click', () => {
+        void pickLocale(locale.id)
+      })
+      sub.appendChild(opt)
+      options.push({ id: locale.id, opt })
+    }
+  }
 
   const errorLine = document.createElement('div')
   errorLine.className = 'mua-error'
@@ -474,6 +524,7 @@ function avatarPageScript(): void {
   }
 
   langItem.addEventListener('click', () => {
+    renderOptions()
     subOpen = !subOpen
     sub.dataset.open = subOpen ? '1' : '0'
     errorLine.dataset.on = '0'

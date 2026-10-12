@@ -3,8 +3,10 @@
  * Language switcher and Sign out. Usage:
  *   node menu-test.mjs <cdpPort> <outDir>
  * Requires a signed-in instance (deep link delivered by the caller first).
- * Verifies: menu opens on click, English/中文 submenu with check, live
- * language switch (html lang flip + menu labels), switch back, sign out.
+ * Verifies: menu opens on click, the Language submenu draws the harness's CATALOG (read from
+ * `<html data-muen-languages>`, published by `@muen/dsh-localize` — it drew a hardcoded
+ * `en`/`zh` pair until 2026-10-12), the check marks, live language switch (html lang flip +
+ * menu labels), switch back, sign out.
  */
 import { createRequire } from 'node:module'
 import { mkdirSync } from 'node:fs'
@@ -66,6 +68,15 @@ const state = () =>
         menuOpen: menu?.getAttribute('data-open') === '1',
         subOpen: sub?.getAttribute('data-open') === '1',
         checkedLocale: checked?.getAttribute('data-locale') ?? null,
+        optionLocales: [...root.querySelectorAll('.mua-opt')].map((opt) => opt.getAttribute('data-locale')),
+        optionLabels: [...root.querySelectorAll('.mua-opt')].map((opt) => (opt.querySelector('span')?.textContent ?? '')),
+        mirror: (() => {
+          try {
+            return JSON.parse(document.documentElement.dataset.muenLanguages ?? 'null')
+          } catch {
+            return null
+          }
+        })(),
         htmlLang: document.documentElement.lang
       }
     }),
@@ -111,6 +122,18 @@ await page.locator('.mua-menu .mua-item').first().click()
 const sub = await waitFor((s) => s.subOpen && s.checkedLocale === 'en', 'language submenu (en checked)', 10000)
 console.log(`[menu] submenu: ${JSON.stringify(sub)}`)
 await shoot('language')
+
+// 3b. The rows are the harness's CATALOG, not the pair the harness happens to ship.
+if (sub.mirror === null || sub.mirror.length === 0) {
+  console.log('[menu] no catalog mirror on this page — the built-in pair is all it can draw (a stock DSH, or a profile without @muen/dsh-localize)')
+  if (sub.optionLocales.length !== 2) throw new Error(`no mirror, so the menu must fall back to the built-in two; it drew ${JSON.stringify(sub.optionLocales)}`)
+} else {
+  const mirrorIds = sub.mirror.map((row) => row.id).join(',')
+  const rowIds = sub.optionLocales.join(',')
+  if (mirrorIds !== rowIds) throw new Error(`the menu is not drawing the catalog: rows=[${rowIds}] mirror=[${mirrorIds}]`)
+  if (sub.optionLocales.length <= 2) throw new Error(`the catalog holds ${sub.optionLocales.length} language(s) — the plugin that publishes it is probably not installed`)
+  console.log(`[menu] catalog: ${sub.optionLocales.length} languages (${rowIds}) — labels: ${JSON.stringify(sub.optionLabels)}`)
+}
 
 // 4. Pick 中文 -> live switch: html lang flips, menu labels follow.
 await page.click('.mua-opt[data-locale="zh"]')
