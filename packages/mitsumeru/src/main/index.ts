@@ -9,7 +9,8 @@ import {
   type MenuItemConstructorOptions
 } from 'electron'
 import { join, resolve } from 'node:path'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { spawnHarness, harnessPaths, type HarnessSession } from './harness'
 import { startUpdater, type UpdaterController } from './updater'
 import { injectUpdateIndicator } from './update-indicator'
@@ -45,9 +46,21 @@ const log = (message: string): void => {
 //   - our display name may change (mitsumeru → mitsumeru) and the path must not;
 //   - the shipping Mitsumeru app already owns ~/Library/Application Support/
 //     Mitsumeru, and two Electron apps must never share one profile.
-app.setPath('userData', join(app.getPath('appData'), 'Mitsumeru'))
-
+//
+// A smoke run is the exception, and it has to be: smoke shares this path with the
+// app a person actually installed, so it read that person's stored Muen session and
+// called `safeStorage.decryptString` on it. On macOS that access is a KEYCHAIN PROMPT,
+// which blocks the main process until someone clicks it — measured 2026-10-20: `pnpm
+// smoke` sat at `auth-protocol-registered` for its whole 90s budget, never reached
+// `harness-ready`, and failed three checks while the code was fine. A gate must not
+// depend on a human, or on credentials that are not its business. Smoke gets its own
+// throwaway profile: no stored session, so nothing to decrypt and nothing to ask.
 const smoke = process.env.MITSUMERU_SMOKE === '1'
+app.setPath(
+  'userData',
+  smoke ? mkdtempSync(join(tmpdir(), 'mitsumeru-smoke-userdata-')) : join(app.getPath('appData'), 'Mitsumeru')
+)
+
 // v5 lockdown scripted attempts: when set, the loaded UI fires intentional
 // violations so the deny log can be asserted (expected denies == 1).
 const lockdownProbe = process.env.MITSUMERU_LOCKDOWN_PROBE === '1'
