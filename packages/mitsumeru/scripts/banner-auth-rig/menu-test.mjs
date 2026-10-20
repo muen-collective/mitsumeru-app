@@ -68,6 +68,11 @@ const state = () =>
         menuOpen: menu?.getAttribute('data-open') === '1',
         subOpen: sub?.getAttribute('data-open') === '1',
         checkedLocale: checked?.getAttribute('data-locale') ?? null,
+        menuLabels: {
+          settings: root.querySelector('.mua-menu [role="menuitem"] span')?.textContent ?? '',
+          language: root.querySelector('.mua-lang span')?.textContent ?? '',
+          signOut: root.querySelector('.mua-signout span')?.textContent ?? ''
+        },
         optionLocales: [...root.querySelectorAll('.mua-opt')].map((opt) => opt.getAttribute('data-locale')),
         optionLabels: [...root.querySelectorAll('.mua-opt')].map((opt) => (opt.querySelector('span')?.textContent ?? '')),
         mirror: (() => {
@@ -110,15 +115,34 @@ const signedIn = await waitFor((s) => s.signedIn && s.rowLabel.length > 0, 'sign
 console.log(`[menu] row: ${JSON.stringify(signedIn)}`)
 await shoot('row')
 
-// 2. Click row -> menu opens.
-await page.click('.mua-row')
+// 2. Click row -> menu opens. Guarded: the row TOGGLES, so an unconditional
+// click closes a menu a previous run left open (measured 2026-10-20).
+if (!(await state()).menuOpen) await page.click('.mua-row')
 const opened = await waitFor((s) => s.menuOpen, 'menu open', 10000)
 console.log(`[menu] opened: ${JSON.stringify(opened)}`)
 await shoot('open')
 
-// 3. Language -> submenu, English checked. (First .mua-item is Language;
-// Sign out shares the class.)
-await page.locator('.mua-menu .mua-item').first().click()
+// 2b. NORMALIZE to English. The chosen language persists, so a rig re-run after
+// a run that ended on 中文 would otherwise fail step 3 on a stale expectation
+// (measured 2026-10-20). A test that only passes from a wiped profile is not a
+// gate.
+const before = await state()
+if (before.checkedLocale !== null && before.checkedLocale !== 'en') {
+  if (!before.menuOpen) await page.click('.mua-row')
+  await waitFor((s) => s.menuOpen, 'menu open for normalize', 10000)
+  await page.click('.mua-menu .mua-lang')
+  await waitFor((s) => s.subOpen, 'submenu for normalize', 10000)
+  await page.click('.mua-opt[data-locale="en"]')
+  await waitFor((s) => s.htmlLang.startsWith('en') && !s.menuOpen, 'normalized to en', 20000)
+  console.log('[menu] normalized to en before the assertions')
+}
+
+// 3. Language -> submenu, English checked. Settings and Sign out are also
+// `.mua-item`, and Settings is appended FIRST, so take the row by its stable
+// hook — an ordinal selector here silently opened Settings instead.
+if (!(await state()).menuOpen) await page.click('.mua-row')
+await waitFor((s) => s.menuOpen, 'menu open', 10000)
+await page.click('.mua-menu .mua-lang')
 const sub = await waitFor((s) => s.subOpen && s.checkedLocale === 'en', 'language submenu (en checked)', 10000)
 console.log(`[menu] submenu: ${JSON.stringify(sub)}`)
 await shoot('language')
@@ -138,7 +162,10 @@ if (sub.mirror === null || sub.mirror.length === 0) {
 // 4. Pick 中文 -> live switch: html lang flips, menu labels follow.
 await page.click('.mua-opt[data-locale="zh"]')
 const zh = await waitFor(
-  (s) => s.htmlLang.startsWith('zh') && !s.menuOpen && s.rowLabel.includes('已登录'),
+  // The row label is the ACCOUNT NAME while signed in (changed 2026-10-02), so the
+  // switch is asserted on what actually localizes: the document language and the
+  // menu's own labels.
+  (s) => s.htmlLang.startsWith('zh') && !s.menuOpen && s.menuLabels.language === '语言',
   'live switch to zh',
   20000
 )
@@ -148,11 +175,11 @@ await shoot('zh')
 // 5. Reopen and switch back to English.
 await page.click('.mua-row')
 await waitFor((s) => s.menuOpen, 'menu reopened', 10000)
-await page.locator('.mua-menu .mua-item').first().click()
+await page.click('.mua-menu .mua-lang')
 await waitFor((s) => s.subOpen, 'submenu reopened', 10000)
 await page.click('.mua-opt[data-locale="en"]')
 const backEn = await waitFor(
-  (s) => s.htmlLang.startsWith('en') && !s.menuOpen && s.rowLabel.includes('Signed in'),
+  (s) => s.htmlLang.startsWith('en') && !s.menuOpen && s.menuLabels.language === 'Language',
   'switch back to en',
   20000
 )
@@ -162,8 +189,35 @@ console.log(`[menu] back to en: ${JSON.stringify(backEn)}`)
 await page.click('.mua-row')
 await waitFor((s) => s.menuOpen, 'menu for signout', 10000)
 await page.click('.mua-signout')
-const outState = await waitFor((s) => !s.signedIn && s.rowLabel.includes('Sign in'), 'signed out', 15000)
-console.log(`[menu] signed out: ${JSON.stringify(outState)}`)
+// Sign out does not leave a signed-out overlay behind: the shell gates the whole
+// app, so this page (and the avatar it drew) goes away and the window returns to
+// the sign-in page. Assert the fact that matters — the session is gone — by
+// asking the bridge, and tolerate the page detaching mid-poll.
+const userAfter = async () => {
+  for (const ctx of browser.contexts()) {
+    for (const p of ctx.pages()) {
+      try {
+        const u = await p.evaluate(() => window.mitsumeru?.auth?.user?.() ?? null)
+        if (u !== undefined) return u
+      } catch {
+        // page navigating or gone
+      }
+    }
+  }
+  return undefined
+}
+let cleared = null
+const deadline = Date.now() + 20000
+while (Date.now() < deadline) {
+  const u = await userAfter()
+  if (u === null) {
+    cleared = u
+    break
+  }
+  await sleep(300)
+}
+if (cleared !== null) throw new Error('sign out did not clear the session')
+console.log('[menu] signed out: the session is cleared (window is back at the sign-in page)')
 await shoot('signedout')
 
 console.log('[menu] done')

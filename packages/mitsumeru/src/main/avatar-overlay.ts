@@ -315,7 +315,13 @@ function avatarPageScript(): void {
   menu.setAttribute('role', 'menu')
 
   const langItem = document.createElement('button')
-  langItem.className = 'mua-item'
+  // `mua-lang` is a STABLE HOOK, not styling: the menu also holds Settings and
+  // Sign out, both `.mua-item`, so anything driving this row must not rely on
+  // ordinal position. It did — menu-test.mjs took the first `.mua-item`, which
+  // stopped being Language the moment Settings was appended above it, and the
+  // click silently opened Settings instead. Same rule as the settings launcher:
+  // find a row by its own name, never by the hashed class or its index.
+  langItem.className = 'mua-item mua-lang'
   langItem.type = 'button'
   langItem.setAttribute('role', 'menuitem')
   const langText = document.createElement('span')
