@@ -47,18 +47,30 @@ const log = (message: string): void => {
 //   - the shipping Mitsumeru app already owns ~/Library/Application Support/
 //     Mitsumeru, and two Electron apps must never share one profile.
 //
-// A smoke run is the exception, and it has to be: smoke shares this path with the
-// app a person actually installed, so it read that person's stored Muen session and
-// called `safeStorage.decryptString` on it. On macOS that access is a KEYCHAIN PROMPT,
-// which blocks the main process until someone clicks it — measured 2026-10-20: `pnpm
-// smoke` sat at `auth-protocol-registered` for its whole 90s budget, never reached
-// `harness-ready`, and failed three checks while the code was fine. A gate must not
-// depend on a human, or on credentials that are not its business. Smoke gets its own
-// throwaway profile: no stored session, so nothing to decrypt and nothing to ask.
+// A test run is the exception, and it has to be: any run that shares this path
+// with the app a person actually installed reads that person's stored Muen
+// session and calls `safeStorage.decryptString` on it. On macOS that access is a
+// KEYCHAIN PROMPT, which blocks the main process until someone clicks it —
+// measured 2026-10-20: `pnpm smoke` sat at `auth-protocol-registered` for its
+// whole 90s budget, never reached `harness-ready`, and failed three checks while
+// the code was fine. A gate must not depend on a human, or on credentials that
+// are not its business.
+//
+// Two switches hand a run its own throwaway profile, so nothing is stored to
+// decrypt and nothing is asked:
+//   - MITSUMERU_SMOKE=1          the shell gates (`pnpm smoke`, `smoke:native`)
+//   - MITSUMERU_PROFILE_DIR=<d>  the CDP rigs in scripts/banner-auth-rig, which
+//     drive the packaged app and include a Sign out step. Without this, running
+//     one would clear the operator's own Muen session.
 const smoke = process.env.MITSUMERU_SMOKE === '1'
+const profileDir = process.env.MITSUMERU_PROFILE_DIR
 app.setPath(
   'userData',
-  smoke ? mkdtempSync(join(tmpdir(), 'mitsumeru-smoke-userdata-')) : join(app.getPath('appData'), 'Mitsumeru')
+  smoke
+    ? mkdtempSync(join(tmpdir(), 'mitsumeru-smoke-userdata-'))
+    : profileDir !== undefined && profileDir !== ''
+      ? profileDir
+      : join(app.getPath('appData'), 'Mitsumeru')
 )
 
 // v5 lockdown scripted attempts: when set, the loaded UI fires intentional

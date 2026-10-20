@@ -24,10 +24,16 @@ here is part of the shipped build.
   path without a person clicking.
 - `MITSUMERU_DSH_HOME=<dir>` / `MITSUMERU_LOG_DIR=<dir>` — throwaway harness
   state; `--remote-debugging-port=<port>` — CDP.
+- `MITSUMERU_PROFILE_DIR=<dir>` — **set this for anything that signs out.**
+  Left unset, the app uses the operator's own
+  `~/Library/Application Support/Mitsumeru`, so a rig whose last step is Sign out
+  clears that person's real Muen session. Reading that profile also trips a macOS
+  Keychain prompt that blocks the main process until someone clicks it — measured
+  2026-10-20, which is why `pnpm smoke` isolates its own profile too.
 
 ```sh
-S=$(mktemp -d "${TMPDIR:-/tmp}/rig.XXXX"); mkdir -p "$S/dsh" "$S/logs"
-MITSUMERU_DSH_HOME="$S/dsh" MITSUMERU_LOG_DIR="$S/logs" \
+S=$(mktemp -d "${TMPDIR:-/tmp}/rig.XXXX"); mkdir -p "$S/dsh" "$S/logs" "$S/profile"
+MITSUMERU_DSH_HOME="$S/dsh" MITSUMERU_LOG_DIR="$S/logs" MITSUMERU_PROFILE_DIR="$S/profile" \
   ./release/mac-arm64/Mitsumeru.app/Contents/MacOS/Mitsumeru \
   --remote-debugging-port=9480 > "$S/app.log" 2>&1 &
 ```
