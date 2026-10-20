@@ -6,7 +6,7 @@
 # prove nothing about what ships.
 #
 #   A. a local HTTP server stands in for the feed. Assert the app asks for
-#      `latest-dev-mac.yml` (the channel derived from the -dev version), that
+#      `dev-mac.yml` (the channel derived from the -dev version), that
 #      the startup delay is 15 s + jitter, and that the version it is offered
 #      matches the running one.
 #   B. the same run against a closed port (the offline case). Assert a logged
