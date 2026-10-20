@@ -36,9 +36,7 @@ SHIPPED_PLUGINS=(
   dsh-eva-theme
   dsh-white-label
   dsh-context-watchdog
-  dsh-turn-summary
   dsh-changes-card
-  dsh-codex-fold
 )
 
 [ -f "$ENTRY" ] || { echo "[FAIL] $ENTRY missing — run: pnpm harness"; exit 1; }

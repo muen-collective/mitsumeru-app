@@ -125,12 +125,32 @@ for (const [name, range] of Object.entries(dsh.dependencies ?? {})) {
   overrides[name] = range.replace(/^[~^]/u, "")
 }
 
+// AN UPSTREAM PACKAGING GAP, PINNED HERE (measured 2026-10-19, harness 0.2.1-rc.2).
+//
+// @deepseek-ai/dsh-client-ui-renderer@0.2.1-rc.2 does require("@deepseek-ai/dsh-client-ui-slots") at
+// module load (SlotRegistry._core = new SlotCore()), so its lib/client.js throws at IMPORT time when
+// the package is absent. But that renderer declares NO dependency on ui-slots — not in dependencies,
+// not in peerDependencies, not in the dependency list of the release — so the package is missing from
+// the resolved graph and from the staged tree. The harness then boots to a blank page, because the
+// renderer every surface mounts from fails to import.
+//
+// The package is published and versioned with the release (0.2.1-rc.2 is on npm), so the fix is to
+// name it explicitly: a PIN OF A MISSING EDGE, not a fork. Delete this when upstream declares it.
+// NOTE: no backticks and no apostrophes anywhere in this block. The script is one single-quoted shell
+// argument, so either one ends the quoting and silently eats the Node source (measured here: it turned
+// process.argv[1] into the string "own"). verify-hero-tagline.mjs caught the missing package, because
+// it imports SlotCore from the installed tree.
+// AN OVERRIDE ONLY CONSTRAINS A VERSION; IT INSTALLS NOTHING. So the missing edge is also added as a
+// DIRECT dependency of the staging manifest — that is what puts the package in the tree.
+const missingEdges = { "@deepseek-ai/dsh-client-ui-slots": version }
+
 writeFileSync(outFile, JSON.stringify({
   name: "mitsumeru-harness-resource",
   private: true,
   description: "Throwaway manifest for the packaged harness tree. Not published.",
-  dependencies: { "@deepseek-ai/dsh": version },
+  dependencies: { "@deepseek-ai/dsh": version, ...missingEdges },
 }, null, 2) + "\n")
+for (const [name, v] of Object.entries(missingEdges)) overrides[name] = v
 writeFileSync(yamlFile, "overrides:\n" + Object.entries(overrides)
   .map(([name, v]) => `  ${JSON.stringify(name)}: ${JSON.stringify(v)}`)
   .join("\n") + "\n" +

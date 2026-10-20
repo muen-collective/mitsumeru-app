@@ -91,8 +91,11 @@ const CODEX_FOLD_ROW_TITLE = 'Status text'
  * HTTP 200, and (c) the served body carries a marker unique to that bundle.
  * Markers are namespace constants declared inside each client bundle.
  */
+// TWO RETIRED 2026-10-02 (see RETIRED_PLUGINS in src/main/harness.ts): dsh-turn-summary and
+// dsh-codex-fold. This probe kept listing them, so the gate failed on packages the app no longer
+// ships — a stale gate, not a broken build. The set below is SHIPPED_PLUGINS's conversation-only
+// remainder.
 const CONVERSATION_PLUGINS = [
-  { id: '@muen/dsh-turn-summary', marker: 'muen-turn-summary' },
   { id: '@muen/dsh-changes-card', marker: 'muen-changes-card' },
 ]
 // The full shipped set, so a plugin silently missing from the composed graph is
@@ -102,14 +105,9 @@ const SHIPPED_IDS = [
   '@muen/dsh-eva-theme',
   '@muen/dsh-white-label',
   '@muen/dsh-context-watchdog',
-  '@muen/dsh-turn-summary',
   '@muen/dsh-changes-card',
-  '@muen/dsh-codex-fold',
 ]
-// Codex-fold's marker is only needed for the fallback path, but asserting it
-// costs nothing and catches a served-but-empty bundle.
-const CODEX_FOLD_ID = '@muen/dsh-codex-fold'
-const CODEX_FOLD_MARKER = 'muen-codex-fold'
+// (dsh-codex-fold was retired 2026-10-02 and is no longer probed — see RETIRED_PLUGINS.)
 
 app.commandLine.appendSwitch('disable-gpu')
 // Keep it off-screen but real: this is a genuine renderer, not a simulation.
@@ -178,13 +176,12 @@ app.whenReady().then(async () => {
     `(async () => {
        const wanted = ${JSON.stringify(SHIPPED_IDS)};
        const conversation = ${JSON.stringify(CONVERSATION_PLUGINS)};
-       const extra = ${JSON.stringify([{ id: CODEX_FOLD_ID, marker: CODEX_FOLD_MARKER }])};
        const graph = (window.__DSH_BOOT__ && window.__DSH_BOOT__.batches) || [];
        const composed = new Set();
        for (const batch of graph) for (const id of batch.entries || []) composed.add(id);
        const missingFromGraph = wanted.filter((id) => !composed.has(id));
        const results = [];
-       for (const entry of [...conversation, ...extra]) {
+       for (const entry of conversation) {
          const batch = graph.find((b) => (b.entries || []).includes(entry.id));
          if (!batch) { results.push({ id: entry.id, ok: false, why: 'not in any composed batch' }); continue; }
          try {
@@ -210,14 +207,10 @@ app.whenReady().then(async () => {
     const result = served.results.find((r) => r.id === entry.id) || {}
     console.log(`[mount-probe] ${entry.id}: served ${result.status || '-'}, ${result.bytes || 0} bytes, marker ${result.hasMarker ? 'FOUND' : 'ABSENT'}`)
   }
-  const codexResult = served.results.find((r) => r.id === CODEX_FOLD_ID) || {}
-  console.log(`[mount-probe] ${CODEX_FOLD_ID}: served ${codexResult.status || '-'}, marker ${codexResult.hasMarker ? 'FOUND' : 'ABSENT'}`)
 
   // State the conversation-only limit explicitly rather than implying a render
-  // proof: a turn-summary row and a changes-card both need a FINISHED turn, and
-  // this probe stages no session. Served + no-registration-throw is everything
-  // that is assertable here.
-  console.log('[mount-probe] turn-summary row: NOT STAGED — its summary row renders only on a finished turn; the assertable facts are the served bundle and the absence of a registration throw (checked below).')
+  // proof: a changes-card needs a FINISHED turn, and this probe stages no session.
+  // Served + no-registration-throw is everything that is assertable here.
   console.log('[mount-probe] changes-card row: NOT STAGED — same turn-shaped limitation.')
 
   if (served.missingFromGraph.length > 0) {
@@ -229,45 +222,119 @@ app.whenReady().then(async () => {
     }
   }
 
+  // A MODAL CAN SQUAT OVER THE UI (measured 2026-10-19): rc.2 opens a "Preview Notice — DeepSeek Harness
+  // 0.2 is still in preview…" dialog on a fresh profile, and it is the `[role="dialog"]` the probe reads.
+  // Dismiss THAT ONE by its own words, and only that one.
+  //
+  // WHAT THIS MUST NEVER DO, learned the hard way the same day: a loose matcher (`includes('preview')`)
+  // plus "click the first button" once pressed a control in the ACCOUNT MENU and opened the deepseek
+  // sign-in dialog, which then looked exactly like a product-level account wall. There is no such wall —
+  // a clean boot with the shell's own bridge and platform mark renders the app with zero dialogs
+  // (measured, twice). So the notice is matched on its exact title, its acknowledgement is matched on
+  // its exact words, and a notice that does not match is left alone.
+  const dismissed = await win.webContents.executeJavaScript(
+    `(() => {
+       const notice = Array.from(document.querySelectorAll('[role="dialog"]'))
+         .find((el) => (el.textContent || '').trim().startsWith('Preview Notice'));
+       if (!notice) return { present: false };
+       const buttons = Array.from(notice.querySelectorAll('button'));
+       const ack = buttons.find((b) => /^(continue|got it|ok|close)$/i.test((b.textContent || '').trim()));
+       if (!ack) return { present: true, clicked: null };
+       ack.click();
+       return { present: true, clicked: (ack.textContent || '').trim() };
+     })()`
+  )
+  console.log('[mount-probe] preview notice  :', dismissed.present ? (dismissed.clicked === null ? 'present, no acknowledgement found' : `dismissed (${dismissed.clicked})`) : 'absent')
+  await new Promise((resolve) => setTimeout(resolve, 800))
+
   // ---- 4a. the two DOM surfaces, read back from Settings --------------------
   // `settings.general.item` only renders while the Settings panel is OPEN, so the
   // row cannot be in the DOM yet. Open it, then look. (Claiming "silent
   // non-mount" before this step would have been a false negative — the same
   // mistake as probing a single-file /plugins URL.)
-  const opened = await win.webContents.executeJavaScript(
-    `(() => {
-       const wanted = ['Settings', '\u8bbe\u7f6e'];
-       const button = Array.from(document.querySelectorAll('button'))
-         .find((el) => wanted.includes((el.textContent || '').trim()));
-       if (!button) return { clicked: false, buttons: Array.from(document.querySelectorAll('button')).map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 25) };
-       button.click();
-       return { clicked: true };
+  //
+  // OPEN IT THE WAY THE APP ITSELF DOES (2026-10-19).
+  //
+  // A synthetic Cmd-, does NOT work here: in desktop runtime the shortcut registry takes its bindings
+  // from the NATIVE keyboard bridge (`window.dshDesktop.keyboard.subscribe`), never from a DOM keydown,
+  // so dispatching one opens nothing — measured. What DOES work is the two-step hop Mitsumeru's own
+  // account overlay already ships (src/main/avatar-overlay.ts): reveal the hidden `sidebar.settings`
+  // ancestor so its launcher has a live rect, click the launcher, then click the Settings row the
+  // harness menu renders. That is exactly what a person clicking "Settings" in the account menu does.
+  //
+  // The menu is veiled for the length of the hop so the intermediate row is never on screen, and the
+  // ancestor's original style is restored either way.
+  const hopped = await win.webContents.executeJavaScript(
+    `(async () => {
+       const slot = document.querySelector('[data-slot="sidebar.settings"]');
+       if (!slot) return { ok: false, why: 'the sidebar.settings slot is not in the DOM' };
+       const outer = slot.parentElement;
+       const saved = outer.getAttribute('style');
+       const veil = document.createElement('style');
+       veil.textContent = '[role="menu"] { visibility: hidden !important; }';
+       document.head.append(veil);
+       outer.style.setProperty('display', 'contents', 'important');
+       void slot.offsetHeight;
+       const launcher = slot.querySelector('button');
+       if (!launcher) {
+         veil.remove();
+         if (saved === null) outer.removeAttribute('style'); else outer.setAttribute('style', saved);
+         return { ok: false, why: 'the settings slot has no launcher' };
+       }
+       launcher.click();
+       for (let tries = 0; tries < 90; tries += 1) {
+         await new Promise((resolve) => requestAnimationFrame(resolve));
+         const row = [...document.querySelectorAll('button')]
+           .find((b) => (b.textContent || '').trim().toLowerCase().startsWith('settings'));
+         if (row) {
+           row.click();
+           veil.remove();
+           if (saved === null) outer.removeAttribute('style'); else outer.setAttribute('style', saved);
+           return { ok: true, row: (row.textContent || '').trim().slice(0, 40), tries };
+         }
+       }
+       veil.remove();
+       if (saved === null) outer.removeAttribute('style'); else outer.setAttribute('style', saved);
+       return { ok: false, why: 'no Settings row appeared in the menu' };
      })()`
   )
-  if (!opened.clicked) {
-    return fail(`could not find the Settings trigger; buttons seen: ${JSON.stringify(opened.buttons)}`)
-  }
+  if (!hopped.ok) return fail(`could not open Settings: ${hopped.why}`)
+  console.log('[mount-probe] settings opened via:', hopped.row)
 
   await new Promise((resolve) => setTimeout(resolve, 2500))
 
   const afterOpen = await win.webContents.executeJavaScript(
     `(() => {
        const text = document.body.textContent || '';
+       // THE SETTINGS DIALOG, NOT "THE FIRST dialog ON THE PAGE". The harness marks it
+       // data-shortcut-modal="settings"; a bare role=dialog once matched a stale sign-in dialog and
+       // reported a panel that was on screen as missing.
+       const dialog = document.querySelector('[data-shortcut-modal="settings"]')
+         || Array.from(document.querySelectorAll('[role=dialog]')).find((el) => (el.textContent || '').includes('General'));
        return {
-         dialog: document.querySelector('[role="dialog"]') !== null,
+         dialog: dialog !== null,
          rowTitle: text.includes(${JSON.stringify(ROW_TITLE)}),
          skins: ${JSON.stringify(ROW_SKINS)}.filter((label) => text.includes(label)),
-         generalOpen: text.includes('Appearance') && text.includes('Font size'),
+         // THE GENERAL PANEL IS IDENTIFIED BY ITS SIGNAL SLOT, not by copy (2026-10-19): the old
+         // 'Appearance' + 'Font size' pair were words from an older release and would report "not
+         // rendering" on a panel that is on screen. The slot element is the contract.
+         // The slot element is the contract, and its CHILDREN are the render: my first cut asked
+         // whether the slot exists in the FIRST [role=dialog], which after the hop is the sign-in dialog
+         // the menu once opened — so the row was found in the body while this reported 'not rendered'.
+         generalOpen: document.querySelector('[data-slot="settings.general.item"]') !== null,
+         generalItems: dialog !== null ? dialog.querySelectorAll('[data-slot="settings.general.item"] > *').length : 0,
+         dialogHead: dialog !== null ? (dialog.textContent || '').slice(0, 180) : '',
          watchdogRow: text.includes(${JSON.stringify(WATCHDOG_ROW_TITLE)})
        };
      })()`
   )
 
   console.log('[mount-probe] settings dialog :', afterOpen.dialog)
-  console.log('[mount-probe] General rendered:', afterOpen.generalOpen)
+  console.log('[mount-probe] General rendered:', afterOpen.generalOpen, '· items', afterOpen.generalItems)
   console.log('[mount-probe] EVA row title   :', afterOpen.rowTitle ? 'FOUND' : 'ABSENT')
   console.log('[mount-probe] EVA skin cards  :', afterOpen.skins.join(', ') || 'NONE')
   console.log('[mount-probe] watchdog row    :', afterOpen.watchdogRow ? 'FOUND' : 'ABSENT')
+  if (!afterOpen.generalOpen) console.log('[mount-probe] dialog head     :', JSON.stringify(afterOpen.dialogHead))
 
   if (!afterOpen.dialog) return fail('the Settings panel did not open')
   if (!afterOpen.rowTitle) {
