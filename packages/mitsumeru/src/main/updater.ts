@@ -1,6 +1,6 @@
 import { app, ipcMain, powerMonitor } from 'electron'
 import { autoUpdater, type UpdateDownloadedEvent } from 'electron-updater'
-import { copyFileSync, mkdirSync, readdirSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import { isDevVersion, releaseChannel, UPDATE_FEED_URL } from '../shared/identity'
@@ -95,7 +95,58 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   // relaunches and the updater checks again; without this guard the same version is
   // re-offered because the current version on disk may not have changed yet when the
   // check runs (founder, 2026-10-19: *"when I restarted it did the update banner again"*).
-  let installedVersion: string | undefined = undefined
+  //
+  // PERSISTED, not a local, and that is the whole point: `quitAndInstall()` QUITS the
+  // app, so a version held in memory is gone by the time the check that matters runs.
+  // The first cut of this guard was an in-memory `let` — it described the relaunch case
+  // in this comment and could not possibly cover it.
+  //
+  // The marker is bounded in two ways so a FAILED install still re-offers:
+  //   - it is consulted only within INSTALL_MARKER_TTL_MS of the request, so a crashed
+  //     or half-finished install cannot suppress the same version forever;
+  //   - it is consumed on first use, so the check after the suppressed one offers the
+  //     version again if it is genuinely still not installed.
+  const INSTALL_MARKER_TTL_MS = 15 * 60 * 1000
+  const installMarkerPath = (): string => join(app.getPath('userData'), 'update-installed.json')
+
+  const readInstalledMarker = (): string | undefined => {
+    try {
+      const parsed = JSON.parse(readFileSync(installMarkerPath(), 'utf8')) as { version?: unknown; at?: unknown }
+      if (typeof parsed.version !== 'string' || parsed.version === '') return undefined
+      if (typeof parsed.at !== 'number') return undefined
+      if (Date.now() - parsed.at > INSTALL_MARKER_TTL_MS) return undefined
+      return parsed.version
+    } catch {
+      return undefined
+    }
+  }
+
+  const clearInstalledMarker = (): void => {
+    try {
+      rmSync(installMarkerPath(), { force: true })
+    } catch {
+      /* best effort */
+    }
+  }
+
+  const writeInstalledMarker = (version: string | undefined): void => {
+    if (version === undefined) return
+    try {
+      mkdirSync(app.getPath('userData'), { recursive: true })
+      writeFileSync(installMarkerPath(), JSON.stringify({ version, at: Date.now() }), 'utf8')
+    } catch (error) {
+      // An unwritable marker costs one duplicate offer, never a failed install.
+      log(`update-install-marker-failed ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  let installedVersion: string | undefined = readInstalledMarker()
+  // If we are ALREADY running the version the marker names, the install worked: drop it
+  // so it cannot suppress anything else inside its TTL window.
+  if (installedVersion !== undefined && installedVersion === app.getVersion()) {
+    clearInstalledMarker()
+    installedVersion = undefined
+  }
   let nextTimer: NodeJS.Timeout | null = null
   let stopped = false
   /** Which check is in flight / last ran. Stamped onto every status so the
@@ -161,6 +212,8 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
       return false
     }
     installedVersion = status.version
+    // Written BEFORE quitAndInstall, because that call ends this process.
+    writeInstalledMarker(status.version)
     log(`update-install-restart version=${status.version ?? 'unknown'}`)
     autoUpdater.quitAndInstall()
     return true
@@ -233,9 +286,13 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   autoUpdater.on('update-available', (info) => {
     // A version we already asked Squirrel to install is NOT "available" again — after
     // quitAndInstall the app relaunches and the on-disk version may not have changed yet,
-    // so the same version would be re-offered on the very next check.
+    // so the same version would be re-offered on the very next check. The marker is
+    // consumed here rather than left in place: if the install genuinely failed, the check
+    // after this one must offer it again instead of hiding the failure.
     if (info.version === installedVersion) {
       log(`update-available-skipped already-installed version=${info.version}`)
+      installedVersion = undefined
+      clearInstalledMarker()
       setStatus({ state: 'current', version: app.getVersion() })
       return
     }
