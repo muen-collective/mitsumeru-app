@@ -317,23 +317,6 @@ function installPermissionPolicy(): void {
 // External-link policy: the preload forwards trusted link clicks here. This is
 // the ONLY code path that opens a browser.
 function installExternalLinkHandler(): void {
-  // Shortcut trigger for injected UI (leading seat, etc.). The harness's
-  // shortcut system routes through `before-input-event` -> IPC -> renderer,
-  // so synthetic DOM KeyboardEvent never reaches it. `sendInputEvent` sends
-  // a real OS-level key event that triggers the same pipeline as a physical
-  // keypress — the shortcuts-bridge's `onInput` handler matches it and
-  // dispatches to the renderer's shortcut registry.
-  ipcMain.handle('mitsumeru:trigger-shortcut', (event, payload: { code?: unknown; modifiers?: unknown }) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (win === null || win.isDestroyed()) return
-    const code = typeof payload?.code === 'string' ? payload.code : ''
-    const mods = Array.isArray(payload?.modifiers) ? payload.modifiers.filter((m): m is string => typeof m === 'string') : []
-    if (code === '') return
-    // keyDown then keyUp so the shortcut bridge sees a complete gesture.
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: code, modifiers: mods as never })
-    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers: mods as never })
-  })
-
   ipcMain.on('mitsumeru:open-external', (event, url: unknown) => {
     if (typeof url !== 'string') return
     // Only the harness page may ask the shell to open something.

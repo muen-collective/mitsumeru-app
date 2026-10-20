@@ -273,15 +273,9 @@ contextBridge.exposeInMainWorld(APP_NAME, {
     }
   },
   // Restart into a downloaded version. Called by the ready-dialog's first
-  // button, the app menu's "Restart to Update…", and the update banner's
-  // "Restart Now" — three surfaces, one action.
+  // button, the app menu's "Restart to Update…", and the update indicator's
+  // Restart action — three surfaces, one action.
   restartToUpdate: () => ipcRenderer.invoke('mitsumeru:update-restart'),
-  // Keyboard shortcut trigger for injected UI (leading seat). Routes through
-  // the main process's `sendInputEvent` so the shortcut bridge's
-  // `before-input-event` handler sees a real key gesture and dispatches to
-  // the renderer's shortcut registry — the same path as a physical keypress.
-  triggerShortcut: (code: string, modifiers: string[]): Promise<void> =>
-    ipcRenderer.invoke('mitsumeru:trigger-shortcut', { code, modifiers }),
   // Muen sign-in (Epic 92). The token deliberately has no getter for the
   // overlay — only the main process and the gated plugin flow (which asks
   // through the trusted IPC) ever see it; the overlay deals in MuenUser.
