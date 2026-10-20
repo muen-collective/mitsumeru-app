@@ -94,7 +94,20 @@ else
         ok "windows: no macOS addons in the payload"
       fi
       n=$(ls "$w/@muen" 2>/dev/null | wc -l | tr -d ' ')
-      if [ "$n" = "7" ]; then ok "windows: payload ships all seven @muen plugins"; else bad "windows: payload ships $n @muen plugins, expected 7"; fi
+      # The expectation is READ FROM SHIPPED_PLUGINS, never hardcoded. It was
+      # hardcoded at 7 and stayed 7 after two plugins retired on 2026-10-02, so
+      # this gate failed on a payload that was exactly right — the same drift
+      # that had mount-probe.cjs listing retired packages. The array is the one
+      # place that knows which packages ship.
+      shipped=$(sed -n '/^const SHIPPED_PLUGINS = \[/,/^\]/p' src/main/harness.ts \
+        | grep -o "@muen/[a-z0-9-]*" | sed 's|@muen/||' | sort -u)
+      expected=$(printf '%s\n' "$shipped" | grep -c . || true)
+      present=$(ls "$w/@muen" 2>/dev/null | sort -u)
+      if [ "$n" = "$expected" ] && [ "$present" = "$shipped" ]; then
+        ok "windows: payload ships all $expected shipped @muen plugins"
+      else
+        bad "windows: payload ships $n @muen plugins, SHIPPED_PLUGINS names $expected (missing: $(comm -23 <(printf '%s\n' "$shipped") <(printf '%s\n' "$present") | tr '\n' ' '))"
+      fi
     else
       bad "windows: could not unpack the NSIS payload from $(basename "$EXE")"
     fi
