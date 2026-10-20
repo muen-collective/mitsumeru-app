@@ -14,6 +14,7 @@ export interface UpdateStatus {
     | 'current'
     | 'available'
     | 'downloading'
+    | 'verifying'
     | 'downloaded'
     | 'error'
   /**

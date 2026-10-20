@@ -91,6 +91,11 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   const { log, isTrustedSender, feedUrl, manualOnly = false, onDownloaded, onStatusChange } = options
 
   let status: UpdateStatus = { state: 'idle', at: Date.now() }
+  // The last version `installNow` was asked to install. After quitAndInstall the app
+  // relaunches and the updater checks again; without this guard the same version is
+  // re-offered because the current version on disk may not have changed yet when the
+  // check runs (founder, 2026-10-19: *"when I restarted it did the update banner again"*).
+  let installedVersion: string | undefined = undefined
   let nextTimer: NodeJS.Timeout | null = null
   let stopped = false
   /** Which check is in flight / last ran. Stamped onto every status so the
@@ -155,6 +160,7 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
       log(`update-install-skipped state=${status.state}`)
       return false
     }
+    installedVersion = status.version
     log(`update-install-restart version=${status.version ?? 'unknown'}`)
     autoUpdater.quitAndInstall()
     return true
@@ -225,6 +231,14 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   let offeredVersion: string | undefined
 
   autoUpdater.on('update-available', (info) => {
+    // A version we already asked Squirrel to install is NOT "available" again — after
+    // quitAndInstall the app relaunches and the on-disk version may not have changed yet,
+    // so the same version would be re-offered on the very next check.
+    if (info.version === installedVersion) {
+      log(`update-available-skipped already-installed version=${info.version}`)
+      setStatus({ state: 'current', version: app.getVersion() })
+      return
+    }
     log(`update-available version=${info.version}`)
     offeredVersion = info.version
     setStatus({ state: 'available', version: info.version })
@@ -235,7 +249,15 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   })
   autoUpdater.on('download-progress', (progress) => {
     const percent = Math.round(progress.percent)
-    setStatus({ state: 'downloading', percent, version: offeredVersion })
+    // A 100% download is NOT "done" — electron-updater still verifies and unpacks after
+    // the last byte lands. Sitting at "downloading 100%" is indistinguishable from a stall
+    // (founder, 2026-10-19: *"progress bar went to 100 and nothing happened"*). The banner
+    // shows a verifying state so the gap is visible rather than frozen.
+    if (percent >= 100) {
+      setStatus({ state: 'verifying', percent: 100, version: offeredVersion })
+    } else {
+      setStatus({ state: 'downloading', percent, version: offeredVersion })
+    }
     if (percent % PROGRESS_STEP === 0) {
       log(`update-download-progress percent=${String(percent)} bps=${String(Math.round(progress.bytesPerSecond))}`)
     }

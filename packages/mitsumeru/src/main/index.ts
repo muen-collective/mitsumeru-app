@@ -12,7 +12,7 @@ import { join, resolve } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { spawnHarness, harnessPaths, type HarnessSession } from './harness'
 import { startUpdater, type UpdaterController } from './updater'
-import { injectUpdateBanner } from './update-banner'
+import { injectUpdateIndicator } from './update-indicator'
 import { startAuth, type AuthController } from './auth'
 import { injectAvatarOverlay } from './avatar-overlay'
 import { injectRailCollapse } from './rail-collapse'
@@ -205,11 +205,12 @@ function createSplashWindow(): BrowserWindow {
     if (HARNESS_TITLES.includes(title)) {
       harnessUiLoaded = true
       log('harness-ui-loaded')
-      // Epic 91: the update banner rides the harness page, injected here —
-      // the title check keeps it off the splash and off the browser-trust
-      // fence's fallback page, and injectUpdateBanner's element guard keeps a
-      // second load from doubling it.
-      injectUpdateBanner(win, log)
+      // Epic 91 (revised): the update indicator rides the harness page,
+      // injected here — the title check keeps it off the splash and off the
+      // browser-trust fence's fallback page, and the element guard keeps a
+      // second load from doubling it. Modelled on DSH Desktop's
+      // DesktopUpdateIndicator: a small pill beside the avatar, not a strip.
+      injectUpdateIndicator(win, log)
       // Epic 92: same hook, same guard, lower-left corner.
       injectAvatarOverlay(win, log)
       // The rail collapses all the way to zero. With the desktop mark live this
@@ -303,6 +304,23 @@ function installPermissionPolicy(): void {
 // External-link policy: the preload forwards trusted link clicks here. This is
 // the ONLY code path that opens a browser.
 function installExternalLinkHandler(): void {
+  // Shortcut trigger for injected UI (leading seat, etc.). The harness's
+  // shortcut system routes through `before-input-event` -> IPC -> renderer,
+  // so synthetic DOM KeyboardEvent never reaches it. `sendInputEvent` sends
+  // a real OS-level key event that triggers the same pipeline as a physical
+  // keypress — the shortcuts-bridge's `onInput` handler matches it and
+  // dispatches to the renderer's shortcut registry.
+  ipcMain.handle('mitsumeru:trigger-shortcut', (event, payload: { code?: unknown; modifiers?: unknown }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win === null || win.isDestroyed()) return
+    const code = typeof payload?.code === 'string' ? payload.code : ''
+    const mods = Array.isArray(payload?.modifiers) ? payload.modifiers.filter((m): m is string => typeof m === 'string') : []
+    if (code === '') return
+    // keyDown then keyUp so the shortcut bridge sees a complete gesture.
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: code, modifiers: mods as never })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: code, modifiers: mods as never })
+  })
+
   ipcMain.on('mitsumeru:open-external', (event, url: unknown) => {
     if (typeof url !== 'string') return
     // Only the harness page may ask the shell to open something.
@@ -580,7 +598,16 @@ function installMenu(): void {
  *
  * Plain wording on purpose: a person reads this.
  */
+let restartOffered = false
 function offerRestart(version: string): void {
+  // GUARD AGAINST DUPLICATE DIALOGS: the same update can be offered more than once if
+  // `update-downloaded` fires again (retry, or the coordinator's state machine re-enters).
+  // The first offer stands; later ones are logged and dropped.
+  if (restartOffered) {
+    log(`update-ready-offer-skipped duplicate version=${version}`)
+    return
+  }
+  restartOffered = true
   log(`update-ready-offer version=${version}`)
   void dialog
     .showMessageBox({
@@ -596,6 +623,7 @@ function offerRestart(version: string): void {
       if (response === 0) {
         updater?.installNow()
       } else {
+        restartOffered = false
         log(`update-install-deferred version=${version}`)
       }
     })

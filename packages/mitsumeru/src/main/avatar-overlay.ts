@@ -179,9 +179,13 @@ function avatarPageScript(): void {
   root.setAttribute('role', 'group')
   root.setAttribute('aria-label', 'Muen account')
   root.style.position = 'fixed'
-  root.style.left = '16px'
-  root.style.bottom = '16px'
+  root.style.left = '0'
+  root.style.bottom = '0'
   root.style.zIndex = '2147483647'
+  root.style.width = '0'
+  root.style.overflow = 'visible'
+  root.style.background = 'transparent'
+  root.style.border = '0'
 
   const style = document.createElement('style')
   // OWNERSHIP TAG (see the module doc). The harness's client module system
@@ -200,14 +204,33 @@ function avatarPageScript(): void {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 13px; color: var(--dsw-alias-label-primary, #f2f2f2);
     }
+    /* A SOLID SLOT, NOT A TRANSPARENT ONE (founder, 2026-10-17: *"our avatar slot needs solid bg"*).
+       The row floats over whatever the rail is showing, so with no fill of its own the label sat on top
+       of the sidebar's own content and the two read as one layer. It is a SURFACE now — the app's layer-2
+       token with a solid fallback (the injected sheet cannot rely on a token resolving in every theme),
+       a hairline and a soft shadow so it lifts off the rail rather than cutting a hole in it. */
     #${ROOT_ID} .mua-row {
+      /* The row is a <button>: reset the UA's outset border and background
+         (that border IS the white line the founder saw) and let it fill the
+         sidebar's width edge to edge. */
+      appearance: none; -webkit-appearance: none;
+      box-sizing: border-box; width: 100%;
       display: flex; align-items: center; gap: 10px;
-      height: 40px; padding: 0 10px 0 4px;
-      border: 0; border-radius: 20px;
-      background: transparent; color: var(--dsw-alias-label-primary, #f2f2f2);
+      height: 48px; padding: 0 12px 0 8px;
+      border: 0; outline: none; box-shadow: none;
+      /* TRANSPARENT, NOT A FLAT FILL. The sidebar column paints its own
+         background (on macOS it layers a gradient and a color-mix over
+         --dsw-specific-sidebar-fill), so any flat token copy shows a seam at
+         the row's top edge — the "light border" the founder saw. The row sits
+         in the sidebar's own box (see paddingBottom in syncSidebarWidth), so
+         the sidebar's painted background shows through unchanged. */
+      background: transparent;
+      color: var(--dsw-alias-label-primary, #f2f2f2);
       font: inherit; cursor: pointer;
     }
-    #${ROOT_ID} .mua-row:hover { background: rgba(255, 255, 255, 0.06); }
+    #${ROOT_ID} .mua-row:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary, #ff0000); outline-offset: -1px; }
+    /* HOVER LIGHTENS THE SOLID SURFACE — it must not go translucent again, or the bug returns on hover. */
+    #${ROOT_ID} .mua-row:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.06)); }
     #${ROOT_ID} .mua-avatar {
       position: relative; width: 32px; height: 32px; flex: none;
       border-radius: 50%; background: #191a1a; overflow: visible;
@@ -442,6 +465,52 @@ function avatarPageScript(): void {
   root.append(style, row, menu)
   const host = document.body ?? document.documentElement
   host.appendChild(root)
+
+  // ---- Sidebar width tracking -----------------------------------------------
+  // The avatar row spans the full sidebar width at the bottom, matching DSH's
+  // account row inside the sidebar column. The sidebar width is the first
+  // grid track of the frame element (same finder as rail-collapse.ts).
+  // When the sidebar collapses (track = 0), the avatar hides — it lives
+  // inside the sidebar conceptually, so it goes with it.
+  // The sidebar column is the frame's first grid child. Measuring it is more
+  // reliable than parsing the grid template: rail-collapse.ts rewrites that
+  // template to `0px …` on collapse, and the harness writes its own value back
+  // on expand, so the element's live box is the single source of truth.
+  const findSidebarCol = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[class*="_sidebarCol"]')
+
+  const syncSidebarWidth = (): void => {
+    const col = findSidebarCol()
+    if (col === null) return
+    const rect = col.getBoundingClientRect()
+    if (rect.width > 0.5) {
+      // Take the column's own box, so the row is flush with the rail even if
+      // the frame ever insets it.
+      root.style.left = `${String(Math.round(rect.left))}px`
+      root.style.width = `${String(Math.round(rect.width))}px`
+      root.style.display = ''
+      // Reserve the row's height at the foot of the rail so the sidebar's own
+      // content scrolls above it instead of running underneath.
+      col.style.paddingBottom = '48px'
+    } else {
+      root.style.display = 'none'
+      col.style.paddingBottom = ''
+    }
+  }
+
+  const attachSidebarWatch = (): void => {
+    new MutationObserver(() => syncSidebarWidth()).observe(host, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'data-sidebar-collapsed']
+    })
+    // A window resize re-lays-out the frame without necessarily rewriting the
+    // inline grid template, so follow it directly too.
+    window.addEventListener('resize', syncSidebarWidth)
+    syncSidebarWidth()
+  }
+  attachSidebarWatch()
 
   // SELF-HEALING (see the module doc). Injection runs once per harness page
   // load, so without this, any DOM cleanup that detaches the root or the
