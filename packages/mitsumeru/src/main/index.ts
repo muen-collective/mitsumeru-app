@@ -647,6 +647,29 @@ app.whenReady().then(() => {
   installExternalLinkHandler()
   installMenu()
   ipcMain.handle('mitsumeru:app-info', () => appInfo())
+  // The workspace folder chooser. The harness ships its own native picker
+  // (`dsh-host-directory-picker-native`), and on macOS that picker is a
+  // `choose folder`/NSOpenPanel run by a SEPARATE `osascript` process — its
+  // panel is never this window's key window, so a new folder appears but the
+  // rename field cannot take keystrokes (founder, 2026-10-22: *"I can open
+  // finder but when I try to create new folder, it can't give it a name"*).
+  // DSH's own desktop does not use that path either: its preload exposes
+  // `__DSH_DIRECTORY_PICKER__` and answers it with `dialog.showOpenDialog`
+  // (`openDirectory` + `createDirectory`). This is that same bridge, so the
+  // client prefers an Electron sheet attached to this window — where typing a
+  // folder name is ordinary text entry — over the detached panel.
+  ipcMain.handle('mitsumeru:pick-directory', async () => {
+    const window = mainWindow
+    if (window === null || window.isDestroyed()) return null
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+    const { canceled, filePaths } = await dialog.showOpenDialog(window, {
+      properties: ['openDirectory', 'createDirectory'],
+      buttonLabel: 'Choose'
+    })
+    return canceled ? null : (filePaths[0] ?? null)
+  })
   // T12: a check 15 s after launch (+ jitter), every 6 h after that, again
   // after a sleep/wake, and on demand. Nothing here blocks the harness boot.
   const feedOverride = process.env.MITSUMERU_UPDATE_FEED ?? ''

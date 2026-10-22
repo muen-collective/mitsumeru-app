@@ -255,6 +255,19 @@ syncWindowFullscreen()
 // update state. Read from the main process instead of baked in at build time,
 // so a running app can never claim a version the artifact does not carry (T11)
 // and the `-dev` label survives a rebuild.
+//
+// The workspace folder chooser rides the SAME name DSH's own desktop exposes
+// (`__DSH_DIRECTORY_PICKER__`), because the harness's directory-picker client
+// looks for exactly this global first and only falls back to the host's
+// osascript panel when it is absent (`dsh-client-ui-directory-picker-native`,
+// `apply()`). The fallback's panel is an accessory process's window, so a new
+// folder cannot be named in it on macOS; this bridge gives the client an
+// Electron sheet attached to this window instead. Same contract as upstream:
+// `pick()` resolves to an absolute path, or `null` when the person cancels.
+contextBridge.exposeInMainWorld('__DSH_DIRECTORY_PICKER__', {
+  pick: () => ipcRenderer.invoke('mitsumeru:pick-directory')
+})
+
 contextBridge.exposeInMainWorld(APP_NAME, {
   getAppInfo: () => ipcRenderer.invoke('mitsumeru:app-info'),
   checkForUpdates: () => ipcRenderer.invoke('mitsumeru:update-check'),
