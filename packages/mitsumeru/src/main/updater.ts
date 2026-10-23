@@ -222,7 +222,14 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   const check = async (trigger: string): Promise<UpdateStatus> => {
     if (stopped) return status
     currentTrigger = trigger
-    log(`update-check-start trigger=${trigger}`)
+    // A person asking may roll back; the clock may not. `manual` is the IPC path
+    // (the pill, the menu item, "Check for Updates"), `menu` the app menu; every
+    // other trigger is a timer, a resume, or the startup check. electron-updater
+    // reads this field on the check it is about to run, so setting it here is
+    // what makes the grant per-ask rather than per-session.
+    const asked = trigger === 'manual' || trigger === 'menu'
+    autoUpdater.allowDowngrade = asked
+    log(`update-check-start trigger=${trigger} allowDowngrade=${String(asked)}`)
     setStatus({ state: 'checking' })
     let failed = false
     try {
@@ -257,7 +264,20 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   autoUpdater.autoInstallOnAppQuit = true
   // Rollback (spec): without this a newer archive can never be replaced by an
   // older one, so a bad release would be a dead end.
-  autoUpdater.allowDowngrade = true
+  //
+  // BUT a ROLLBACK IS A DECISION, NOT A SIDE EFFECT (2026-10-23). Leaving this
+  // `true` for every check let a TIMER move a person backwards: a build carrying
+  // an unpublished version (installed from release/ for testing) sat AHEAD of the
+  // channel, so every check offered the older published version, autoDownload
+  // fetched it, and the banner offered a restart that could only ever go back.
+  // The download completed, the version string did not move forward, and the next
+  // check offered it again — a loop with no way out (founder, 2026-10-23: *"i
+  // updated and restart but i did again so I think theres a bug somewhere"*).
+  //
+  // So the flag follows the trigger: a person asking (manual/menu) may roll back,
+  // a scheduled check and the startup check may not. `allowDowngrade` is a plain
+  // field electron-updater reads per check, so it is set below, once per check.
+  autoUpdater.allowDowngrade = false
   // A -dev build tracks the dev channel; a promoted build tracks latest.
   autoUpdater.allowPrerelease = isDevVersion(app.getVersion())
 
@@ -284,6 +304,17 @@ export function startUpdater(options: UpdaterOptions): UpdaterController {
   let offeredVersion: string | undefined
 
   autoUpdater.on('update-available', (info) => {
+    // NEVER OFFER THE VERSION ALREADY RUNNING (2026-10-23). electron-updater
+    // filters equal versions itself (`semver.eq` → not available), so reaching
+    // here with an equal version means something upstream disagreed — a cached
+    // download, or a manifest whose version matches while the running bundle
+    // says otherwise. Either way the offer can only waste a restart, and once it
+    // repeats it is a loop, so the check is repeated here as the last word.
+    if (info.version === app.getVersion()) {
+      log(`update-available-skipped running-version version=${info.version}`)
+      setStatus({ state: 'current', version: app.getVersion() })
+      return
+    }
     // A version we already asked Squirrel to install is NOT "available" again — after
     // quitAndInstall the app relaunches and the on-disk version may not have changed yet,
     // so the same version would be re-offered on the very next check. The marker is

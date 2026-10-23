@@ -227,5 +227,55 @@ else
   bad "offline: harness did not boot with the feed down"
 fi
 
+# --- C. the feed offers an OLDER version (the 2026-10-23 loop) ---------------
+
+# Measured then: a build carrying an unpublished version sat ahead of the
+# channel, so every check offered the older published one, autoDownload fetched
+# it, and the banner offered a restart that could only go backwards. The version
+# string never moved forward and the next check offered it again. A scheduled
+# check must now refuse the downgrade outright — no download, no offer.
+OLD_VERSION="${VERSION%%-*}-alpha.1"  # pre-release tags sort alphabetically: alpha < dev
+cat >"$WORK/$CHANNEL_FILE" <<YML
+version: $OLD_VERSION
+files:
+  - url: Mitsumeru-$OLD_VERSION-arm64-mac.zip
+    sha512: $(node -e "console.log('0'.repeat(128))")
+    size: 1
+path: Mitsumeru-$OLD_VERSION-arm64-mac.zip
+sha512: $(node -e "console.log('0'.repeat(128))")
+releaseDate: '2026-10-20T00:00:00.000Z'
+YML
+
+node "$WORK/feed.mjs" "$PORT" "$WORK/requests-old.log" "$(cat "$WORK/$CHANNEL_FILE")" &
+FEED_PID=$!
+sleep 1
+
+run_case older "$FEED" 'update-current\|update-check-result' "$WORK/older.log"
+kill "$FEED_PID" 2>/dev/null
+
+if grep -q 'allowDowngrade=false' "$WORK/older.log"; then
+  ok "older: the startup check runs with downgrade refused"
+else
+  bad "older: startup check did not record allowDowngrade=false"
+fi
+
+if grep -q "update-available version=$OLD_VERSION" "$WORK/older.log"; then
+  bad "older: a scheduled check OFFERED the older $OLD_VERSION — the downgrade loop"
+else
+  ok "older: a scheduled check never offered the older version"
+fi
+
+if grep -q 'update-downloaded' "$WORK/older.log"; then
+  bad "older: a scheduled check DOWNLOADED the older version"
+else
+  ok "older: nothing was downloaded"
+fi
+
+if grep -q "update-current version=$OLD_VERSION" "$WORK/older.log"; then
+  ok "older: the older manifest was read and correctly judged not-newer"
+else
+  bad "older: the app never reported the served older version"
+fi
+
 echo "update smoke: logs in $WORK"
 exit "$status"
