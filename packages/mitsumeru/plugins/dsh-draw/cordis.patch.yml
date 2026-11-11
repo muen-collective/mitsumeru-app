@@ -1,0 +1,7 @@
+# board — bundle patch layer.
+#
+# One row: mount this package, so both halves load. The Host half serves the drawing
+# page and the store at /plugins/draw; the Client half adds the right-panel tab.
+- insert:
+    - id: muen-draw
+      name: '@muen/dsh-draw'

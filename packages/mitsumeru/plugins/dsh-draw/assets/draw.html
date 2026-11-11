@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Draw</title>
+<style>
+  :root{
+    --ink:#1b1b1b; --line:#cfcac1; --paper:#fffefb; --bg:#efede8;
+    --accent:#3b6cf0; --soft:#7a7a7a; --grid:#e9e6df;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    font:12.5px/1.35 system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--ink); display:flex; flex-direction:column; overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  .bar{
+    display:flex; align-items:center; gap:4px; padding:6px 8px;
+    background:#faf9f6; border-bottom:1px solid var(--line); flex:0 0 auto; flex-wrap:wrap;
+  }
+  .bar button{
+    appearance:none; border:1px solid transparent; background:transparent; color:var(--ink);
+    font:inherit; padding:5px 8px; border-radius:6px; cursor:pointer; line-height:1;
+  }
+  .bar button:hover{background:#eae6df}
+  .bar button.on{background:var(--ink); color:#fff}
+  .sep{width:1px; height:18px; background:var(--line); margin:0 3px}
+  .spacer{flex:1}
+  .rev{color:var(--soft); font-size:11px; padding-right:2px; white-space:nowrap}
+  .dot{display:inline-block; width:6px; height:6px; border-radius:50%; background:#38a169; margin-right:4px; vertical-align:1px}
+  .dot.off{background:#c05621}
+  .stage{flex:1; position:relative; overflow:hidden}
+  canvas{display:block; width:100%; height:100%; touch-action:none; cursor:crosshair}
+  canvas.selecting{cursor:default}
+  .editor{
+    position:absolute; z-index:5; min-width:90px; padding:2px 5px; border:1px solid var(--accent);
+    border-radius:4px; background:#fff; font:13px/1.3 system-ui,-apple-system,Helvetica,Arial,sans-serif;
+    outline:none; box-shadow:0 2px 10px rgba(0,0,0,.10);
+  }
+  .hint{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:1;
+    color:#b8b2a7; text-align:center; font-size:12.5px; pointer-events:none; line-height:1.6;
+  }
+  .toast{
+    position:absolute; left:50%; bottom:12px; transform:translateX(-50%);
+    background:var(--ink); color:#fff; padding:6px 11px; border-radius:7px; font-size:11.5px;
+    opacity:0; transition:.15s; pointer-events:none;
+  }
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <button data-tool="select" class="on" title="Select / move (V)">&#10162;</button>
+  <button data-tool="draw" title="Scribble (D)">&#9998;</button>
+  <button data-tool="rect" title="Box (R)">&#9633;</button>
+  <button data-tool="arrow" title="Arrow (A)">&#8599;</button>
+  <button data-tool="text" title="Text (T)">T</button>
+  <div class="sep"></div>
+  <button id="undo" title="Undo (Cmd/Ctrl+Z)">&#8630;</button>
+  <button id="del" title="Delete selected (Del)">&#9003;</button>
+  <button id="clear" title="Clear the board">Clear</button>
+  <div class="spacer"></div>
+  <span class="rev"><span class="dot" id="dot"></span><span id="rev">…</span></span>
+</div>
+
+<div class="stage" id="stage">
+  <div class="hint" id="hint">Scribble the thing you can't say.<br>The agent reads what you draw.</div>
+  <canvas id="c"></canvas>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  const PREFIX = '__PREFIX__';
+  const API = PREFIX + '/api/state';
+
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const revEl = document.getElementById('rev');
+  const dotEl = document.getElementById('dot');
+  const hintEl = document.getElementById('hint');
+
+  const state = {
+    tool: 'select',
+    elements: [],
+    selected: null,
+    revision: 0,
+    dirty: false,
+    saving: false,
+    history: [],
+    editing: null,
+  };
+  let drag = null;
+  let saveTimer = null;
+  let dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+  const clone = (v) => JSON.parse(JSON.stringify(v));
+  const pushHistory = () => {
+    state.history.push(clone(state.elements));
+    if (state.history.length > 60) state.history.shift();
+  };
+
+  function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('on');
+    clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('on'), 1400);
+  }
+
+  /* ---------- sizing ---------- */
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    canvas.width = Math.max(1, Math.round(r.width * dpr));
+    canvas.height = Math.max(1, Math.round(r.height * dpr));
+    canvas.style.width = r.width + 'px';
+    canvas.style.height = r.height + 'px';
+    draw();
+  }
+  window.addEventListener('resize', resize);
+
+  /* ---------- drawing ---------- */
+  function roundRect(g, x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r);
+    g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r);
+    g.arcTo(x, y, x + w, y, r);
+    g.closePath();
+  }
+
+  function draw() {
+    const W = canvas.width / dpr, H = canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    // paper
+    ctx.fillStyle = '#fffefb';
+    ctx.fillRect(0, 0, W, H);
+    // grid
+    ctx.strokeStyle = '#e9e6df'; ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 24) { ctx.beginPath(); ctx.moveTo(x + .5, 0); ctx.lineTo(x + .5, H); ctx.stroke(); }
+    for (let y = 0; y < H; y += 24) { ctx.beginPath(); ctx.moveTo(0, y + .5); ctx.lineTo(W, y + .5); ctx.stroke(); }
+
+    for (const el of state.elements) drawElement(el);
+
+    if (state.selected) {
+      const el = state.elements.find(e => e.id === state.selected);
+      if (el) {
+        const b = boundsOf(el);
+        ctx.save();
+        ctx.strokeStyle = '#3b6cf0'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+        ctx.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6);
+        ctx.restore();
+      }
+    }
+    hintEl.style.display = state.elements.length ? 'none' : '';
+  }
+
+  function drawElement(el) {
+    ctx.save();
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = '#2b2b2b';
+
+    if (el.kind === 'rect') {
+      ctx.fillStyle = 'rgba(0,0,0,0.018)';
+      roundRect(ctx, el.x, el.y, el.w, el.h, 3);
+      ctx.fill(); ctx.stroke();
+      if (el.label) {
+        ctx.fillStyle = '#2b2b2b';
+        ctx.font = '13px system-ui,-apple-system,Helvetica,Arial,sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(el.label, el.x + el.w / 2, el.y + el.h / 2);
+      }
+    } else if (el.kind === 'draw') {
+      const pts = el.points || [];
+      if (pts.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.stroke();
+      }
+    } else if (el.kind === 'arrow') {
+      const x1 = el.x, y1 = el.y, x2 = el.x + el.w, y2 = el.y + el.h;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      const a = Math.atan2(y2 - y1, x2 - x1), hd = 9;
+      ctx.beginPath();
+      ctx.moveTo(x2 - hd * Math.cos(a - 0.42), y2 - hd * Math.sin(a - 0.42));
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x2 - hd * Math.cos(a + 0.42), y2 - hd * Math.sin(a + 0.42));
+      ctx.stroke();
+    } else if (el.kind === 'text') {
+      ctx.fillStyle = '#1f1f1f';
+      ctx.font = '14px system-ui,-apple-system,Helvetica,Arial,sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      const lines = wrap(ctx, el.label || '', Math.max(el.w || 200, 40));
+      let y = el.y;
+      for (const ln of lines) { ctx.fillText(ln, el.x, y); y += 19; }
+    }
+    ctx.restore();
+  }
+
+  function wrap(g, text, maxW) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    if (!words.length) return [''];
+    const out = []; let cur = '';
+    for (const w of words) {
+      const t = cur ? cur + ' ' + w : w;
+      if (g.measureText(t).width > maxW && cur) { out.push(cur); cur = w; } else cur = t;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function boundsOf(el) {
+    if (el.kind === 'draw') {
+      const pts = el.points || [];
+      if (!pts.length) return { x: el.x || 0, y: el.y || 0, w: 0, h: 0 };
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    }
+    if (el.kind === 'arrow') {
+      return { x: Math.min(el.x, el.x + el.w), y: Math.min(el.y, el.y + el.h), w: Math.abs(el.w), h: Math.abs(el.h) };
+    }
+    if (el.kind === 'text') {
+      ctx.save(); ctx.font = '14px system-ui,-apple-system,Helvetica,Arial,sans-serif';
+      const lines = wrap(ctx, el.label || '', Math.max(el.w || 200, 40));
+      const w = Math.max(...lines.map(l => ctx.measureText(l).width), 8);
+      ctx.restore();
+      return { x: el.x, y: el.y, w, h: Math.max(1, lines.length) * 19 };
+    }
+    return { x: el.x, y: el.y, w: el.w || 0, h: el.h || 0 };
+  }
+
+  /* ---------- pointer ---------- */
+  const pt = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return { x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top) };
+  };
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state.editing) commitText();
+    const p = pt(e);
+    canvas.setPointerCapture(e.pointerId);
+
+    if (state.tool === 'select') {
+      const hit = hitTest(p);
+      state.selected = hit ? hit.id : null;
+      if (hit) { pushHistory(); drag = { mode: 'move', id: hit.id, start: p, orig: clone(hit) }; }
+      canvas.classList.add('selecting');
+      draw(); return;
+    }
+
+    if (state.tool === 'text') { beginText(p); return; }
+
+    pushHistory();
+    if (state.tool === 'draw') {
+      const el = { id: uid(), kind: 'draw', x: p.x, y: p.y, w: 0, h: 0, points: [[p.x, p.y]] };
+      state.elements.push(el);
+      state.selected = el.id;
+      drag = { mode: 'draw', id: el.id };
+    } else {
+      const el = { id: uid(), kind: state.tool, x: p.x, y: p.y, w: 0, h: 0, label: '' };
+      state.elements.push(el);
+      state.selected = el.id;
+      drag = { mode: 'shape', id: el.id, start: p };
+    }
+    markDirty(); draw();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const p = pt(e);
+    const el = state.elements.find(x => x.id === drag.id);
+    if (!el) return;
+
+    if (drag.mode === 'draw') {
+      el.points.push([p.x, p.y]);
+    } else if (drag.mode === 'shape') {
+      if (el.kind === 'arrow') { el.x = drag.start.x; el.y = drag.start.y; el.w = p.x - drag.start.x; el.h = p.y - drag.start.y; }
+      else {
+        el.x = Math.min(p.x, drag.start.x); el.y = Math.min(p.y, drag.start.y);
+        el.w = Math.abs(p.x - drag.start.x); el.h = Math.abs(p.y - drag.start.y);
+      }
+    } else if (drag.mode === 'move') {
+      const dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+      if (el.kind === 'draw') { el.points = drag.orig.points.map(([x, y]) => [x + dx, y + dy]); }
+      el.x = drag.orig.x + dx; el.y = drag.orig.y + dy;
+    }
+    markDirty(); draw();
+  });
+
+  canvas.addEventListener('pointerup', () => {
+    if (!drag) return;
+    const el = state.elements.find(x => x.id === drag.id);
+    if (el && drag.mode === 'shape' && Math.abs(el.w) < 4 && Math.abs(el.h) < 4) {
+      el.w = 160; el.h = 80;
+    }
+    drag = null;
+    save();
+    draw();
+  });
+
+  function hitTest(p) {
+    for (let i = state.elements.length - 1; i >= 0; i--) {
+      const el = state.elements[i];
+      const b = boundsOf(el);
+      const pad = 6;
+      if (p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad) return el;
+    }
+    return null;
+  }
+
+  /* ---------- text ---------- */
+  function beginText(p) {
+    const input = document.createElement('input');
+    input.className = 'editor';
+    input.style.left = p.x + 'px';
+    input.style.top = (p.y - 2) + 'px';
+    input.value = '';
+    stage.appendChild(input);
+    input.focus();
+    state.editing = { input, at: p };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitText(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancelText(); }
+      e.stopPropagation();
+    });
+    input.addEventListener('blur', () => commitText());
+  }
+
+  function commitText() {
+    if (!state.editing) return;
+    const { input, at } = state.editing;
+    const label = input.value.trim();
+    state.editing = null;
+    input.remove();
+    if (!label) { draw(); return; }
+    pushHistory();
+    const el = { id: uid(), kind: 'text', x: at.x, y: at.y, w: Math.max(120, label.length * 7.6), h: 19, label };
+    state.elements.push(el);
+    state.selected = el.id;
+    setTool('select');
+    markDirty(); save(); draw();
+  }
+
+  function cancelText() {
+    if (!state.editing) return;
+    state.editing.input.remove();
+    state.editing = null;
+    draw();
+  }
+
+  /* ---------- persistence ---------- */
+  function markDirty() { state.dirty = true; setDot(false); }
+
+  function setDot(ok) {
+    dotEl.classList.toggle('off', !ok);
+  }
+
+  function save() {
+    if (!state.dirty) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      if (state.saving) return;
+      state.saving = true;
+      try {
+        const res = await fetch(API, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ elements: strip(state.elements) }),
+        });
+        const body = await res.json();
+        if (body && body.ok) {
+          state.revision = body.revision;
+          state.dirty = false;
+          setDot(true);
+          revEl.textContent = 'rev ' + body.revision;
+        } else {
+          setDot(false);
+          toast('save failed');
+        }
+      } catch (err) {
+        setDot(false);
+        toast('save failed');
+      } finally {
+        state.saving = false;
+      }
+    }, 500);
+  }
+
+  function strip(els) {
+    return els.map((el) => {
+      const out = { id: el.id, kind: el.kind, x: round(el.x), y: round(el.y) };
+      if (el.kind === 'draw') {
+        out.points = (el.points || []).map(([x, y]) => [round(x), round(y)]);
+        if (out.points.length > 4000) out.points = out.points.slice(0, 4000);
+      } else {
+        out.w = round(el.w || 0); out.h = round(el.h || 0);
+        if (el.label) out.label = String(el.label).slice(0, 300);
+      }
+      return out;
+    });
+  }
+  const round = (n) => Math.round(Number(n) || 0);
+
+  async function load(force) {
+    try {
+      const res = await fetch(API, { cache: 'no-store' });
+      const body = await res.json();
+      if (!body || !body.ok) return;
+      if (!force && (state.dirty || state.saving)) { state.revision = body.revision; return; }
+      if (body.revision !== state.revision || force) {
+        state.revision = body.revision;
+        state.elements = Array.isArray(body.elements) ? body.elements : [];
+        state.dirty = false;
+        setDot(true);
+        revEl.textContent = 'rev ' + body.revision;
+        draw();
+      }
+    } catch (err) {
+      setDot(false);
+    }
+  }
+
+  /* ---------- toolbar ---------- */
+  function setTool(t) {
+    state.tool = t;
+    state.selected = null;
+    document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    draw();
+  }
+  document.querySelectorAll('[data-tool]').forEach((b) =>
+    b.addEventListener('click', () => setTool(b.dataset.tool)));
+
+  document.getElementById('undo').addEventListener('click', () => {
+    if (!state.history.length) return toast('nothing to undo');
+    state.elements = state.history.pop();
+    state.selected = null;
+    markDirty(); save(); draw();
+  });
+
+  document.getElementById('del').addEventListener('click', () => {
+    if (!state.selected) return toast('nothing selected');
+    pushHistory();
+    state.elements = state.elements.filter(e => e.id !== state.selected);
+    state.selected = null;
+    markDirty(); save(); draw();
+  });
+
+  document.getElementById('clear').addEventListener('click', () => {
+    if (!state.elements.length) return;
+    pushHistory();
+    state.elements = []; state.selected = null;
+    markDirty(); save(); draw();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (state.editing) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    const k = e.key.toLowerCase();
+    if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); document.getElementById('undo').click(); return; }
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); document.getElementById('del').click(); return; }
+    const map = { v: 'select', d: 'draw', r: 'rect', a: 'arrow', t: 'text' };
+    if (map[k] && !e.metaKey && !e.ctrlKey) { setTool(map[k]); return; }
+    if (e.key === 'Escape') { state.selected = null; draw(); }
+  });
+
+  const uid = () => 'e' + Math.random().toString(36).slice(2, 9);
+
+  /* ---------- boot ---------- */
+  resize();
+  load(true);
+  setInterval(() => load(false), 1500);
+})();
+</script>
+</body>
+</html>

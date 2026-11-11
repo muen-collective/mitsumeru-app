@@ -37,6 +37,12 @@ const SHIPPED_PLUGINS = [
   // composed in the order the dev profile ran them.
   '@muen/dsh-context-watchdog',
   '@muen/dsh-changes-card',
+  // dsh-draw joined 2026-11-10: a right-panel surface for the moments when a thing is
+  // too fiddly to describe — the person sketches, and the agent reads the shapes back
+  // as element summaries. The only shipped plugin whose Host half also serves a page
+  // (prepare-harness.sh copies its assets/), and the only one of these that registers
+  // agent tools rather than just a Client surface.
+  '@muen/dsh-draw',
 ]
 
 /**

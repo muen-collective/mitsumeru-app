@@ -199,7 +199,9 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # muen-plugins and vendored here so ensureProfile can symlink it into the profile
 # on first boot.
 #
-# FIVE packages after the 2026-10-02 retirement. Of the four Kun-parity QOL
+# SIX packages after the 2026-10-02 retirement. dsh-draw joined 2026-11-10 (a board
+# the agent reads — the person sketches, the tools return element summaries); it is the
+# only one here with an assets/ tree, copied by the loop below. Of the four Kun-parity QOL
 # plugins that joined the set at 0.2.1, dsh-turn-summary and dsh-codex-fold
 # were retired against the 0.2.0-rc.2 harness (codex-fold is redundant with the
 # native Work details feature; turn-summary shadows the native turn-process
@@ -216,7 +218,7 @@ rm -rf "$OUT/node_modules/.bin" "$STAGE"
 # seed module words — see the COMPATIBILITY note at the top of its
 # lib/client.tpl.js for the measured list and the one import that broke in
 # DSH Desktop 2.0.4.
-for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdog dsh-changes-card; do
+for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdog dsh-changes-card dsh-draw; do
   src="plugins/$pkg"
   [ -d "$src" ] || { echo "[FAIL] shipped plugin missing: $src"; exit 1; }
   dest="$OUT/node_modules/@muen/$pkg"
@@ -239,6 +241,14 @@ for pkg in dsh-brand-mitsumeru dsh-eva-theme dsh-white-label dsh-context-watchdo
   if [ -d "$src/themes" ]; then
     mkdir -p "$dest/themes"
     cp "$src"/themes/*.json "$dest/themes/"
+  fi
+  # A plugin may ship static files its Host half serves (dsh-draw's drawing page).
+  # Copied for the same reason themes/ are: the vendored package must match the
+  # `files` list in its own manifest, and the Host half reads them from disk — a
+  # copy without them mounts and then answers 500 on every request.
+  if [ -d "$src/assets" ]; then
+    mkdir -p "$dest/assets"
+    cp -R "$src"/assets/. "$dest/assets/"
   fi
   [ -f "$dest/lib/client.js" ] || { echo "[FAIL] $src has no client half"; exit 1; }
   [ -f "$src/cordis.patch.yml" ] || { echo "[FAIL] $src has no patch layer"; exit 1; }
