@@ -37,6 +37,7 @@ SHIPPED_PLUGINS=(
   dsh-white-label
   dsh-context-watchdog
   dsh-changes-card
+  dsh-draw
 )
 
 [ -f "$ENTRY" ] || { echo "[FAIL] $ENTRY missing — run: pnpm harness"; exit 1; }

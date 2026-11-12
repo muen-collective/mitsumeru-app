@@ -5,18 +5,23 @@
  *
  * WHY A PATCH
  * -----------
- * The Plugins page derives the badge from ONE name-prefix check, not from a
- * manifest flag (measured on the shipped 0.2.1-alpha.2 bundles,
- * `dsh-client-ui-plugin-manager/lib/client.js`):
+ * The Plugins page derives the badge from ONE name check, not from a manifest
+ * flag (`dsh-client-ui-plugin-manager/lib/client.js`):
  *
- *     beta: pkg.name.startsWith("@deepseek-ai/dsh-experimental-")
+ *     0.2.1-alpha.2 … 0.2.1-rc.5:  beta: pkg.name.startsWith("@deepseek-ai/dsh-experimental-")
+ *     0.2.2-rc.1 onward:           beta: EXPERIMENTAL_BUNDLES.has(pkg.name)
+ *
+ * Upstream swapped the prefix rule for an explicit `new Set([...])` of bundle
+ * names beside it in the same module (measured 2026-11-11 on 0.2.2-rc.1), so
+ * the anchor is the predicate line, not the list: the list grows with every
+ * preview bundle upstream ships, the predicate is one line and stable.
  *
  * There is no `experimental` field in any official plugin's package.json, and
  * `packageText` reads only `pkg.name` for this decision. Both renderers (the
  * list `PackageCard` and the open `PackageDetail`) consume the same predicate,
  * so the one line is the whole mechanism.
  *
- * Our plugins are `@muen/*`, so they can never match upstream's prefix. The
+ * Our plugins are `@muen/*`, so they can never be in upstream's set. The
  * founder's call (2026-10-10): "dsh uses experimental badge, we should do the
  * same w our plugins for consistency". This patch adds an OR clause for the
  * `@muen/` scope — same Tag, same tone, same locales (`statusBeta` is already
@@ -58,7 +63,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const PACKAGE = '@deepseek-ai/dsh-client-ui-plugin-manager'
-const BETA_LINE_ORIGINAL = 'beta: pkg.name.startsWith("@deepseek-ai/dsh-experimental-")'
+const BETA_LINE_ORIGINAL = 'beta: EXPERIMENTAL_BUNDLES.has(pkg.name)'
 const BETA_LINE_PATCHED = `${BETA_LINE_ORIGINAL} || pkg.name.startsWith("@muen/")`
 const DEFAULT_APP = '/Applications/Mitsumeru.app'
 
@@ -91,7 +96,7 @@ const patched = before.includes(BETA_LINE_PATCHED)
 if (patched) {
   if (checkOnly) {
     console.log(`OK (patched) — ${bundlePath}`)
-    console.log(`     beta covers both upstream's experimental prefix and the @muen/ scope.`)
+    console.log(`     beta covers both upstream's experimental set and the @muen/ scope.`)
     process.exit(0)
   }
   console.log(`OK (already patched) — ${bundlePath}`)
@@ -101,7 +106,7 @@ if (patched) {
 // ── 2. --check on an unpatched bundle is a gate failure ─────────────────────
 if (checkOnly) {
   console.error(`NOT PATCHED — ${bundlePath}`)
-  console.error(`       expected the @muen/ OR clause beside upstream's experimental prefix.`)
+  console.error(`       expected the @muen/ OR clause beside upstream's EXPERIMENTAL_BUNDLES check.`)
   console.error(`       fix: node patches/patch-muen-beta-badge.mjs${harnessFlag >= 0 ? ` --harness ${harnessDir}` : ''}`)
   process.exit(1)
 }
@@ -150,7 +155,7 @@ if (noBackup) {
 renameSync(tmpPath, bundlePath)
 
 console.log(`OK — patched ${bundlePath}`)
-console.log(`     beta now covers "@muen/" as well as upstream's experimental prefix (${statSync(bundlePath).size} bytes)`)
+console.log(`     beta now covers "@muen/" as well as upstream's experimental set (${statSync(bundlePath).size} bytes)`)
 console.log(`     Verify:  node patches/patch-muen-beta-badge.mjs${harnessFlag >= 0 ? ` --harness ${harnessDir}` : ''} --check`)
 if (noBackup) {
   console.log('     Staged tree: electron-builder packages and signs this as-is, so the')

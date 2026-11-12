@@ -106,6 +106,7 @@ const SHIPPED_IDS = [
   '@muen/dsh-white-label',
   '@muen/dsh-context-watchdog',
   '@muen/dsh-changes-card',
+  '@muen/dsh-draw',
 ]
 // (dsh-codex-fold was retired 2026-10-02 and is no longer probed — see RETIRED_PLUGINS.)
 
@@ -424,6 +425,6 @@ app.whenReady().then(async () => {
     `[mount-probe] console errors  : ${consoleErrors.length} total — 0 from the four QOL plugins, ` +
       `${known.length} named pre-existing (see KNOWN_UNATTRIBUTED)`,
   )
-  console.log('[mount-probe] PASS: seven bundles composed and served with HTTP 200; no shipped plugin logged a registration error; Settings → General shows the EVA theme row, both skins and the Context reminder row' + (CODEX_FOLD_SLOT_DECLARED ? ', and codex-fold renders its Plugins row' : '; codex-fold\'s Plugins row is unrenderable in this harness (slot declared by no bundle) and was asserted as served + clean instead'))
+  console.log('[mount-probe] PASS: eight bundles composed and served with HTTP 200; no shipped plugin logged a registration error; Settings → General shows the EVA theme row, both skins and the Context reminder row' + (CODEX_FOLD_SLOT_DECLARED ? ', and codex-fold renders its Plugins row' : '; codex-fold\'s Plugins row is unrenderable in this harness (slot declared by no bundle) and was asserted as served + clean instead'))
   app.exit(0)
 })

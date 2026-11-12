@@ -71,6 +71,10 @@ done
 # NSIS: the installer is a stub plus `$PLUGINSDIR/app-64.7z`, which holds the app the
 # user ends up with. Opening the nested archive is the only way to see it.
 EXE="release/Mitsumeru Setup $VERSION.exe"
+# electron-builder writes the installer with spaces; the publish copy is renamed to the
+# hyphenated form the feed names (dev.yml). Both are the same bytes, so inspect whichever
+# is on disk — a feed naming a file that is not here is verify:release's job, not this one.
+[ -f "$EXE" ] || EXE="release/Mitsumeru-Setup-$VERSION.exe"
 if [ ! -f "$EXE" ]; then
   bad "missing $(basename "$EXE")"
 else
