@@ -63,8 +63,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const PACKAGE = '@deepseek-ai/dsh-client-ui-plugin-manager'
-const BETA_LINE_ORIGINAL = 'beta: EXPERIMENTAL_BUNDLES.has(pkg.name)'
-const BETA_LINE_PATCHED = `${BETA_LINE_ORIGINAL} || pkg.name.startsWith("@muen/")`
+// Shape, not a line. 0.2.2-rc.2 ships this bundle minified, where the same
+// predicate is written `beta:XX.has(pkg.name)` with upstream's set inlined and
+// no space after the colon — the semantic text is the anchor, the layout is not.
+const BETA_RE = /beta:\s*EXPERIMENTAL_BUNDLES\.has\(pkg\.name\)/
+const BETA_PATCHED_RE =
+  /beta:\s*EXPERIMENTAL_BUNDLES\.has\(pkg\.name\)\s*\|\|\s*pkg\.name\.startsWith\("@muen\/"\)/
 const DEFAULT_APP = '/Applications/Mitsumeru.app'
 
 const argv = process.argv.slice(2)
@@ -92,7 +96,7 @@ const before = readFileSync(bundlePath, 'utf8')
 // ── 1. already patched? ─────────────────────────────────────────────────────
 // The patched line CONTAINS the original as its prefix, so this check must run
 // first — otherwise an already-patched bundle would count two "originals".
-const patched = before.includes(BETA_LINE_PATCHED)
+const patched = BETA_PATCHED_RE.test(before)
 if (patched) {
   if (checkOnly) {
     console.log(`OK (patched) — ${bundlePath}`)
@@ -111,24 +115,15 @@ if (checkOnly) {
   process.exit(1)
 }
 
-// ── 3. guard: exactly one unpatched occurrence, exact line shape ────────────
-const occurrences = before.split(BETA_LINE_ORIGINAL).length - 1
+// ── 3. guard: exactly one unpatched occurrence ──────────────────────────────
+const occurrences = [...before.matchAll(new RegExp(BETA_RE.source, 'g'))].length
 if (occurrences !== 1) {
-  fail(`expected exactly one ${JSON.stringify(BETA_LINE_ORIGINAL)}; found ${occurrences} — upstream layout changed; re-derive the patch`)
+  fail(`expected exactly one ${JSON.stringify(BETA_RE.source)}; found ${occurrences} — upstream layout changed; re-derive the patch`)
 }
-const betaIdx = before.indexOf(BETA_LINE_ORIGINAL)
-const lineStart = before.lastIndexOf('\n', betaIdx) + 1
-const lineEnd = before.indexOf('\n', betaIdx)
-if (lineEnd < 0) fail('anchors missing: unterminated beta line')
-const originalLine = before.slice(lineStart, lineEnd)
-if (originalLine.trim() !== BETA_LINE_ORIGINAL) {
-  fail(`beta line has an unexpected shape, refusing to edit: ${JSON.stringify(originalLine.trim())}`)
-}
-const indent = originalLine.slice(0, originalLine.length - originalLine.trimStart().length)
-const after = before.slice(0, lineStart) + `${indent}${BETA_LINE_PATCHED}` + before.slice(lineEnd)
+const after = before.replace(BETA_RE, (match) => `${match} || pkg.name.startsWith("@muen/")`)
 
 // ── 4. verify before touching the original ──────────────────────────────────
-if (!after.includes(BETA_LINE_PATCHED)) fail('patched beta line missing from the would-be result — refusing to write')
+if (!BETA_PATCHED_RE.test(after)) fail('patched beta predicate missing from the would-be result — refusing to write')
 const probePath = join(tmpdir(), `muen-beta-badge-probe-${process.pid}.js`)
 writeFileSync(probePath, after, 'utf8')
 try {

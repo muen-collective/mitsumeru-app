@@ -1,102 +1,76 @@
 #!/usr/bin/env node
 /**
  * patch-hero-brand-tagline.mjs — add the `conversation.hero.tagline` seam to the
- * vendored client bundle of `@deepseek-ai/dsh-client-ui-conversation`.
+ * conversation HeroShell headline, so our brand plugin can put OUR line there
+ * instead of the harness's locale string.
  *
  * WHY A PATCH
  * -----------
- * The blank-session hero ("Into the Unknown") renders its headline as plain
- * `t("hero.headline")` text inside HeroShell. There is NO slot there, and a
- * plugin cannot create one: the client Slots service exposes `inject`/`register`
- * only — a slot must be DECLARED by a parent entry before any renderer may call
- * it. Verified 2026-09-05 (and again 2026-09-17, see below):
+ * HeroShell is upstream code. Its headline text node is a plain `t("hero.headline")`
+ * (`dsh-client-ui-conversation/lib/client.js`) and the only hero seats upstream
+ * declares are `sidebar.brand.mark`, `sidebar.brand.name`, `conversation.hero.brand.mark`
+ * and `conversation.hero.frame` — none of them around the headline. Without a seam the
+ * brand plugin can restyle the hero but cannot change its words, and it must not
+ * shadow upstream's factory (that is a SlotOwnershipError, not a style).
  *
- *   - live slot tree (Slots.listSubTree) has no tagline/subtitle seam anywhere:
- *     `sidebar.brand.mark`, `sidebar.brand.name`, `conversation.hero.brand.mark`
- *     are the only brand seats.
- *   - `ctx.locale.register('conversation', 'en', …)` throws — the runtime keeps
- *     ONE dictionary per (namespace, locale), and `dsh-client-ui-conversation`
- *     already owns the `conversation` namespace. So the headline string cannot be
- *     remapped from a plugin either.
+ * So the shell patches ONE call site into a slot call and declares the slot in the
+ * factory's own children table. Both edits are additive: an occupant changes the
+ * words, no occupant leaves the stock harness rendering its locale string through
+ * the slot's `fallbackText`.
  *
- * So the seam has to be added to the UI package. This script performs that
- * additive edit, and `@muen/dsh-white-label` (Settings → Brand → Hero tagline)
- * is its occupant.
+ * TWO EDITS, TWO MARKERS
+ * ----------------------
+ *   A. the call — HeroShell renders `renderSlot("conversation.hero.tagline", {
+ *      fallbackText, headlineClassName }, { fallback })` where the headline read was
+ *   B. the declaration — the `conversation.content` factory's children table gains
+ *      `"conversation.hero.tagline": { kind: "single", scope: "root" }`
  *
- * WHERE IT RUNS (this copy)
- * -------------------------
- * Vendored from mitsu `05-dsh-core/patches/patch-hero-brand-tagline.mjs` — keep
- * the two in sync. This copy is the one the BUILD uses: `prepare-harness.sh`
- * runs it against the staged `build/harness` tree, BEFORE electron-builder signs
- * and packages the app, so the seam is inside the signature. Patching an
- * installed bundle after the fact (`--app`) is the field repair path and costs
- * the signature: `codesign --verify` reports "a sealed resource is missing or
- * invalid" naming the edited file, and Gatekeeper can no longer assess the app.
+ * The two are checked independently on purpose: a bundle patched by an A-only
+ * version of this script has the call but not the declaration, and that combination
+ * is a render-time crash. Re-running repairs it.
  *
- * THE SEAM IS TWO EDITS, NOT ONE (measured the hard way, 2026-09-17)
- * -----------------------------------------------------------------
- * A version of this script that ONLY wrapped the headline blanked every new
- * session — no hero, no composer. Reason, read from the installed renderer
- * (`@deepseek-ai/dsh-client-ui-renderer`): HeroShell is a component of the
- * `conversation.content` FACTORY, so its `renderSlot` is `boundFactoryRenderSlot`,
- * which refuses any key missing from the factory's own declaration:
+ * SHAPE, NOT LINES (2026-11-12)
+ * -----------------------------
+ * Until 0.2.2-rc.1 the client bundles shipped pretty-printed, and this script matched
+ * exact source lines. **0.2.2-rc.2 ships them minified** (conversation: 23,144 lines →
+ * 26), and the first staging run on it failed loudly — `expected exactly one
+ * "conversation.hero.brand.mark": { declaration; found 0` — which is the guard doing
+ * its job rather than editing the wrong place.
  *
- *     const declared = definition.children?.[key]
- *     if (declared === void 0) throw new SlotOwnershipError(
- *       `slot '${key}' is not declared by this Factory`)
+ * The anchors are therefore structural now, and both layouts are targeted:
+ *   - the seat is found by its KEY and brace-matched, never by its line;
+ *   - the new entry reuses the sibling's own value text, so `kind`/`scope` keep
+ *     whatever quote style and spacing the bundle was emitted with;
+ *   - the headline read is found as a CALL with either quote style, and the
+ *     replacement is emitted compact for a minified bundle and spaced for a
+ *     pretty-printed one.
+ * Nothing depends on minified identifier names except `renderSlot` and the
+ * `HeroShell_module_css_default.headline` class reference, both of which upstream
+ * keeps (measured on 0.2.2-rc.2).
  *
- * The throw happens during render, so the whole blank-session view (composer
- * included) unmounts. `renderSlot` is NOT a plugin-extensible escape hatch: the
- * slot must be declared in the factory's `children` table first. Hence:
+ * WHERE IT RUNS
+ * -------------
+ * `prepare-harness.sh` runs this against the staged `build/harness` tree BEFORE
+ * electron-builder signs, so the edit is inside the signature. Patching an installed
+ * app afterwards costs the seal (codesign names the edited file, Gatekeeper can no
+ * longer assess the app) — field repair only.
  *
- *   EDIT A — wrap the headline text node in `renderSlot("conversation.hero.tagline", …)`
- *   EDIT B — add `"conversation.hero.tagline": { kind: "single", scope: "root" }`
- *            to the `children` table of the `conversation.content` factory
- *            definition (registered by `defineFactory`, right beside the
- *            existing `conversation.hero.brand.mark` seat).
+ * Vendored from mitsu `05-dsh-core/patches/patch-hero-brand-tagline.mjs` — keep the
+ * two in sync.
  *
- * Edit A alone is a render-time crash. Edit B alone declares a seat nothing
- * renders. Both are applied, and re-running this script REPAIRS a bundle that an
- * older, A-only version of it already touched.
- *
- * Edit A passes:
- *   - fallbackText       — the locale headline, so an occupant can re-render it
- *   - headlineClassName  — HeroShell's headline class, so the tagline inherits
- *                          the shipped hero typography instead of guessing it
- * and keeps `t("hero.headline")` as the slot fallback.
- *
- * UPSTREAM EQUIVALENT (preferred long-term — upstream this instead of patching)
- * ----------------------------------------------------------------------------
- * packages/client/ui-conversation/src/client/…:
- *   1. declare the child in the `conversation.content` factory's `children` map;
- *   2. in skeleton/HeroShell.tsx replace the headline text node:
- *        - children: [jsx("span", { children: t("hero.headline") }), …]
- *        + children: [jsx("span", {
- *        +   children: renderSlot("conversation.hero.tagline",
- *        +     { fallbackText: t("hero.headline"), headlineClassName: HeroShell_module_css_default.headline },
- *        +     { fallback: t("hero.headline") }),
- *        + }), …]
- *
- * The fallback keeps upstream behavior exactly: with no occupant the headline
- * renders as before, and with an empty `brandTagline` the occupant re-renders
- * the same `fallbackText` itself (so the words never vanish).
- *
- * Invariants: idempotent (each edit is marker-checked independently), atomic
- * (write to a temp file + rename), and verified before the original is replaced
- * — the result must parse, and the factory's `children` table must actually
- * evaluate to an object carrying the tagline seat.
+ * Invariants: idempotent (marker-checked), guarded (exactly one anchor of each kind
+ * and a validated sibling shape, or nothing is written), atomic (temp file + rename),
+ * and the would-be result must PARSE and its children table must EVALUATE before the
+ * original is replaced.
  *
  * Usage:
- *   node patches/patch-hero-brand-tagline.mjs --harness build/harness   # build (prepare-harness.sh)
- *   node patches/patch-hero-brand-tagline.mjs --harness build/harness --check
- *   node patches/patch-hero-brand-tagline.mjs                           # default installed app
+ *   node patches/patch-hero-brand-tagline.mjs --harness build/harness            # build
+ *   node patches/patch-hero-brand-tagline.mjs --harness build/harness --check    # gate
+ *   node patches/patch-hero-brand-tagline.mjs                                    # installed app
  *   node patches/patch-hero-brand-tagline.mjs --app "/Applications/Mitsumeru Dev.app"
  *
- * Exit 0 = patched, repaired or already patched. Exit 1 = could not patch
- * (nothing written).
- *
- * After running it, run the behaviour gate:
- *   node scripts/verify-hero-tagline.mjs --harness build/harness
+ * Exit 0 = patched, already patched, or (--check) verified patched.
+ * Exit 1 = could not patch / not patched (nothing written).
  */
 
 import { copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -105,14 +79,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const MARKER = 'conversation.hero.tagline'
-// Edit A is present when HeroShell CALLS the seam; edit B when the factory
-// DECLARES it. The two markers are disjoint (a call has `renderSlot("…", {`,
-// a declaration has `"…": {`), which is what lets a repair target just one.
-const SEAM_CALL_MARKER = `renderSlot("${MARKER}"`
-const DECLARATION_MARKER = `"${MARKER}": {`
-const FACTORY_NAME = 'name: "conversation.content"'
-const BRAND_MARK_DECL = '"conversation.hero.brand.mark": {'
+const SEAT = 'conversation.hero.brand.mark'
+// The first seat of the same children table, used to locate the table when the
+// factory's `name` property is not in a shape we can match.
+const TABLE_ANCHOR_SEAT = 'conversation.hero.frame'
+const HEADLINE_CLASS = 'HeroShell_module_css_default.headline'
 const PACKAGE = '@deepseek-ai/dsh-client-ui-conversation'
+
+// A call carries the marker inside renderSlot(...); a declaration carries it as a
+// quoted property key. Disjoint, so a repair can target just one edit.
+const CALL_RE = () => /renderSlot\(\s*[`"]conversation\.hero\.tagline[`"]/
+const DECL_RE = () => /"conversation\.hero\.tagline"\s*:/
+
 const DEFAULT_APP = '/Applications/Mitsumeru.app'
 
 const argv = process.argv.slice(2)
@@ -140,42 +118,52 @@ function fail(message) {
 }
 
 /**
- * Read the `children` table of the `conversation.content` factory definition as
- * source text, by brace-matching from `children: {` (the literal has no braces
- * inside strings, so depth counting is exact).
+ * Index of the brace that closes the one at `openIdx`.
  * @param {string} source - bundle text
- * @returns {string | null} the object literal, braces included
+ * @param {number} openIdx - index of an opening brace
+ * @returns {number} index of its partner, or -1
  */
-function childrenLiteralOf(source) {
-  const factoryIdx = source.indexOf(FACTORY_NAME)
-  if (factoryIdx < 0) return null
-  const childrenIdx = source.indexOf('children: {', factoryIdx)
-  if (childrenIdx < 0) return null
-  const openIdx = childrenIdx + 'children: '.length
+function closingBrace(source, openIdx) {
   let depth = 0
   for (let i = openIdx; i < source.length; i += 1) {
     const ch = source[i]
     if (ch === '{') depth += 1
     else if (ch === '}') {
       depth -= 1
-      if (depth === 0) return source.slice(openIdx, i + 1)
+      if (depth === 0) return i
     }
   }
-  return null
+  return -1
 }
 
 /**
- * Evaluate the factory's `children` table. Returns null when it cannot be read
- * or parsed — callers treat that as a hard failure, never as "probably fine".
+ * The `children` table that holds the hero seats, found from a seat key so it does
+ * not depend on how the factory's `name` property is written.
+ * @param {string} source - bundle text
+ * @returns {{ open: number, close: number } | null} brace indices of the table
+ */
+function seatTable(source) {
+  const anchor = source.indexOf(`"${TABLE_ANCHOR_SEAT}"`)
+  if (anchor < 0) return null
+  const childrenIdx = source.lastIndexOf('children:', anchor)
+  if (childrenIdx < 0) return null
+  const open = source.indexOf('{', childrenIdx)
+  if (open < 0 || open > anchor) return null
+  const close = closingBrace(source, open)
+  return close < 0 ? null : { open, close }
+}
+
+/**
+ * Evaluate the hero seats table from the bundle text.
  * @param {string} source - bundle text
  * @returns {Record<string, { kind?: string, scope?: string }> | null}
  */
-function readChildrenTable(source) {
-  const literal = childrenLiteralOf(source)
-  if (literal === null) return null
+function readSeatTable(source) {
+  const table = seatTable(source)
+  if (table === null) return null
   try {
-    const table = new Function(`return (${literal})`)()
-    return table && typeof table === 'object' ? table : null
+    const value = new Function(`return (${source.slice(table.open, table.close + 1)})`)()
+    return value && typeof value === 'object' ? value : null
   } catch {
     return null
   }
@@ -183,20 +171,20 @@ function readChildrenTable(source) {
 
 if (!existsSync(bundlePath)) fail(`no client bundle at ${bundlePath} (wrong --app path?)`)
 const before = readFileSync(bundlePath, 'utf8')
+// Emit the replacement in the layout the bundle uses. A minified bundle is a
+// handful of very long lines; a pretty one is thousands of short ones.
+const minified = before.split('\n').length < 200
 
 // ── 1. what is already applied? ─────────────────────────────────────────────
-// The two edits are checked independently on purpose: a bundle patched by the
-// earlier A-only version of this script has the call but not the declaration,
-// and that combination is a render-time crash. Re-running must repair it.
-const hasCall = before.includes(SEAM_CALL_MARKER)
-const hasDeclaration = before.includes(DECLARATION_MARKER)
+const hasCall = CALL_RE().test(before)
+const hasDeclaration = DECL_RE().test(before)
 if (hasCall && hasDeclaration) {
-  const table = readChildrenTable(before)
+  const table = readSeatTable(before)
   if (table === null || table[MARKER] === undefined) {
-    fail('markers present but the factory children table does not carry the seam — bundle is inconsistent; reinstall the bundle and patch again')
+    fail('markers present but the hero seats table does not carry the seam — bundle is inconsistent; reinstall the bundle and patch again')
   }
   console.log(`OK (already patched) — ${bundlePath}`)
-  console.log(`     seam "${MARKER}" is called by HeroShell and declared by the "${FACTORY_NAME.split('"')[1]}" factory.`)
+  console.log(`     seam "${MARKER}" is called by HeroShell and declared by the conversation.content factory.`)
   process.exit(0)
 }
 
@@ -204,75 +192,57 @@ let after = before
 
 // ── 2. EDIT B — declare the seat in the factory's children table ────────────
 if (!hasDeclaration) {
-  const occurrences = after.split(BRAND_MARK_DECL).length - 1
+  const seatKey = `"${SEAT}"`
+  const occurrences = after.split(seatKey).length - 1
   if (occurrences !== 1) {
-    fail(`expected exactly one ${BRAND_MARK_DECL} declaration; found ${occurrences} — upstream layout changed; re-derive the patch`)
+    fail(`expected exactly one ${seatKey} declaration; found ${occurrences} — upstream layout changed; re-derive the patch`)
   }
-  const keyIdx = after.indexOf(BRAND_MARK_DECL)
-  const openIdx = keyIdx + BRAND_MARK_DECL.length - 1
-  let depth = 0
-  let closeIdx = -1
-  for (let i = openIdx; i < after.length; i += 1) {
-    const ch = after[i]
-    if (ch === '{') depth += 1
-    else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) { closeIdx = i; break }
-    }
-  }
+  const keyIdx = after.indexOf(seatKey)
+  const colonIdx = after.indexOf(':', keyIdx + seatKey.length)
+  const openIdx = after.indexOf('{', colonIdx)
+  if (colonIdx < 0 || openIdx < 0) fail('could not find the hero brand-mark declaration body')
+  const closeIdx = closingBrace(after, openIdx)
   if (closeIdx < 0) fail('could not find the end of the hero brand-mark declaration')
-  if (after.slice(closeIdx + 1, closeIdx + 2) !== ',') {
+
+  const valueText = after.slice(openIdx, closeIdx + 1)
+  if (!/kind:\s*[`"]single[`"]/.test(valueText) || !/scope:\s*[`"]root[`"]/.test(valueText)) {
+    fail(`hero brand-mark declaration has an unexpected shape, refusing to copy it: ${JSON.stringify(valueText.slice(0, 120))}`)
+  }
+  // The entry must be followed by a comma to keep the object literal valid.
+  let commaIdx = closeIdx + 1
+  while (after[commaIdx] === ' ' || after[commaIdx] === '\n') commaIdx += 1
+  if (after[commaIdx] !== ',') {
     fail('the hero brand-mark declaration is not followed by a comma — refusing to edit')
   }
+  // Reuse the sibling's own indentation when the bundle is pretty-printed.
   const lineStart = after.lastIndexOf('\n', keyIdx) + 1
-  // Copy the sibling seat's exact text (indentation included) and swap the key,
-  // so the new entry is formatted identically however the bundle was emitted.
-  const siblingText = after.slice(lineStart, closeIdx + 2)
-  if (!/kind:\s*"single"/.test(siblingText) || !/scope:\s*"root"/.test(siblingText)) {
-    fail(`hero brand-mark declaration has an unexpected shape, refusing to copy it: ${JSON.stringify(siblingText.slice(0, 120))}`)
-  }
-  const newEntryText = siblingText.replace(BRAND_MARK_DECL, `"${MARKER}": {`)
-  after = after.slice(0, closeIdx + 2) + '\n' + newEntryText + after.slice(closeIdx + 2)
+  const indent = minified ? '' : after.slice(lineStart, keyIdx)
+  const entry = `${minified ? '' : '\n'}${indent}"${MARKER}":${minified ? '' : ' '}${valueText},`
+  after = after.slice(0, commaIdx + 1) + entry + after.slice(commaIdx + 1)
 }
 
-// ── 3. EDIT A — wrap the headline text node in the seam ─────────────────────
+// ── 3. EDIT A — render the headline through the seam ────────────────────────
 if (!hasCall) {
-  // `t("hero.headline")` is READ exactly once in an unpatched bundle (the locale
-  // dictionaries hold the key as a quoted property, not as this call), and it is
-  // the HeroShell headline. A structural walk is deliberately avoided: the
-  // bundled `titleGroup` has no `children: [` array of its own (it compiles to a
-  // variadic `.jsxs(...)` argument list), so array-anchored matching would land
-  // on the fishHitbox. The exact source line is asserted instead, so an upstream
-  // refactor fails loudly rather than editing the wrong place.
-  const HEADLINE_READ = 't("hero.headline")'
-  if (after.split(HEADLINE_READ).length - 1 !== 1) {
-    fail(`expected exactly one ${HEADLINE_READ} read; found ${after.split(HEADLINE_READ).length - 1} — upstream layout changed; re-derive the patch`)
+  // The headline read is a CALL with the locale key; the dictionaries hold the key
+  // as a quoted property, so the call form is unique in an unpatched bundle.
+  const reads = [...after.matchAll(/\bt\(([`"])hero\.headline\1\)/g)]
+  if (reads.length !== 1) {
+    fail(`expected exactly one t("hero.headline") read; found ${reads.length} — upstream layout changed; re-derive the patch`)
   }
-  const nodeIdx = after.indexOf(HEADLINE_READ)
-  const lineStart = after.lastIndexOf('\n', nodeIdx) + 1
-  const lineEnd = after.indexOf('\n', nodeIdx)
-  if (lineEnd < 0) fail('anchors missing: unterminated headline line')
-  const originalLine = after.slice(lineStart, lineEnd)
-  if (!originalLine.trim().startsWith('children: [(0, react_jsx_runtime.jsx)("span", { children: ' + HEADLINE_READ)) {
-    fail(`headline line has an unexpected shape, refusing to edit: ${JSON.stringify(originalLine.trim().slice(0, 120))}`)
-  }
-  const indent = originalLine.slice(0, originalLine.length - originalLine.trimStart().length)
-  const replacementLine = [
-    `${indent}children: [(0, react_jsx_runtime.jsx)("span", {`,
-    `${indent}\tchildren: renderSlot("${MARKER}", {`,
-    `${indent}\t\tfallbackText: ${HEADLINE_READ},`,
-    `${indent}\t\theadlineClassName: HeroShell_module_css_default.headline`,
-    `${indent}\t}, { fallback: ${HEADLINE_READ} })`,
-    `${indent}}), (0, react_jsx_runtime.jsx)("span", {`,
-  ].join('\n')
-  after = after.slice(0, lineStart) + replacementLine + after.slice(lineEnd)
+  const [read] = reads
+  const quote = read[1]
+  const headline = `t(${quote}hero.headline${quote})`
+  const seam = minified
+    ? `renderSlot(${quote}${MARKER}${quote},{fallbackText:${headline},headlineClassName:${HEADLINE_CLASS}},{fallback:${headline}})`
+    : `renderSlot(${quote}${MARKER}${quote}, { fallbackText: ${headline}, headlineClassName: ${HEADLINE_CLASS} }, { fallback: ${headline} })`
+  after = after.slice(0, read.index) + seam + after.slice(read.index + read[0].length)
 }
 
 // ── 4. verify before touching the original ──────────────────────────────────
-if (!after.includes(SEAM_CALL_MARKER)) fail('seam call missing from the would-be result — refusing to write')
-if (!after.includes(DECLARATION_MARKER)) fail('seam declaration missing from the would-be result — refusing to write')
-const table = readChildrenTable(after)
-if (table === null) fail('could not evaluate the factory children table in the would-be result — refusing to write')
+if (!CALL_RE().test(after)) fail('seam call missing from the would-be result — refusing to write')
+if (!DECL_RE().test(after)) fail('seam declaration missing from the would-be result — refusing to write')
+const table = readSeatTable(after)
+if (table === null) fail('could not evaluate the hero seats table in the would-be result — refusing to write')
 if (table[MARKER] === undefined) {
   fail('the would-be result does not declare the seam in the factory children table — HeroShell would throw SlotOwnershipError')
 }
@@ -282,8 +252,7 @@ if (table[MARKER].kind !== 'single') {
 if (table[MARKER].scope !== 'root') {
   fail(`seam declared with scope ${JSON.stringify(table[MARKER].scope)}; expected "root"`)
 }
-const brandMark = table['conversation.hero.brand.mark']
-if (brandMark === undefined) fail('the would-be result lost the hero brand-mark declaration')
+if (table[SEAT] === undefined) fail('the would-be result lost the hero brand-mark declaration')
 
 // Parse the would-be result without writing next to the app bundle (the file
 // sandbox may refuse that, and --check should stay a read-only probe). The

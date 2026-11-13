@@ -1,7 +1,7 @@
 {
   "name": "mitsumeru",
   "productName": "Mitsumeru",
-  "version": "0.2.10-dev",
+  "version": "0.2.11-dev",
   "description": "Mitsumeru — our own Electron shell around a DSH release. Epic 86 Track B.",
   "private": true,
   "main": "out/main/index.js",
@@ -51,7 +51,7 @@
     "frameless:check": "node_modules/.bin/electron scripts/frameless-check.cjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.2-rc.1",
+    "@deepseek-ai/dsh": "0.2.2-rc.2",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {

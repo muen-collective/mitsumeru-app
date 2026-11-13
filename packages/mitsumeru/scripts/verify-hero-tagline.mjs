@@ -38,7 +38,11 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const MARKER = 'conversation.hero.tagline'
-const FACTORY_NAME = 'name: "conversation.content"'
+// The first seat of the factory's `children` table: the anchor the table is
+// found by. `conversation.hero.frame` sits above the seat we add, in every
+// layout upstream has shipped.
+const TABLE_ANCHOR_SEAT = 'conversation.hero.frame'
+const FACTORY_LABEL = 'conversation.content'
 const argv = process.argv.slice(2)
 const appFlag = argv.indexOf('--app')
 const harnessFlag = argv.indexOf('--harness')
@@ -65,13 +69,22 @@ if (!source.includes(MARKER)) {
   process.exit(1)
 }
 
-/** Brace-match the `children` table of the conversation factory definition. */
+/**
+ * Brace-match the `children` table of the conversation factory definition.
+ *
+ * Located by a SEAT it contains, not by the factory's `name:` literal or by a
+ * `children: {` with a space: 0.2.2-rc.2 ships this bundle minified, where the
+ * same table is written `name:`conversation.content`` and `children:{`. The
+ * first seat is stable across both layouts, and the table is the object that
+ * `children:` names immediately before it.
+ */
 function childrenLiteralOf(text) {
-  const factoryIdx = text.indexOf(FACTORY_NAME)
-  if (factoryIdx < 0) return null
-  const childrenIdx = text.indexOf('children: {', factoryIdx)
+  const anchor = text.indexOf(`"${TABLE_ANCHOR_SEAT}"`)
+  if (anchor < 0) return null
+  const childrenIdx = text.lastIndexOf('children:', anchor)
   if (childrenIdx < 0) return null
-  const openIdx = childrenIdx + 'children: '.length
+  const openIdx = text.indexOf('{', childrenIdx)
+  if (openIdx < 0 || openIdx > anchor) return null
   let depth = 0
   for (let i = openIdx; i < text.length; i += 1) {
     const ch = text[i]
@@ -123,18 +136,14 @@ if (declaredProblems.length > 0) {
 }
 
 // ── 3. CALL: extract the real HeroShell and run it ──────────────────────────
-const start = source.indexOf('function HeroShell(')
-if (start < 0) {
-  console.error('FAIL — HeroShell not found; the bundle layout changed, re-derive this check')
+// Sliced by matching its own braces, not by a region comment: 0.2.2-rc.2 ships
+// this bundle minified, where there is no `//#endregion` to stop at and the
+// whole HeroShell is one line.
+const heroShellSource = sliceFunctionSource(source, 'function HeroShell(')
+if (heroShellSource === null) {
+  console.error('FAIL — HeroShell not found or not brace-matchable; the bundle layout changed, re-derive this check')
   process.exit(1)
 }
-// Heroes end at the `//#endregion` that closes their region.
-const end = source.indexOf('//#endregion', start)
-if (end < 0) {
-  console.error('FAIL — could not find the end of the HeroShell region')
-  process.exit(1)
-}
-const heroShellSource = source.slice(start, end)
 
 // Minimal stubs — only what the extracted region references. `.jsxs` takes an
 // ARRAY of children (that is why the headline row is a jsxs and the text node a
@@ -151,6 +160,87 @@ function renderSlot(name, ownerProps, options) {
 }
 
 const t = (key) => (key === 'hero.headline' ? 'HEADLINE_TEXT' : key)
+
+/**
+ * Slice `function NAME(...) { ... }` out of a bundle by matching its braces.
+ *
+ * Brace matching has to know where strings end, or a `}` inside a style string
+ * or a template literal would close the function early: quoted strings skip to
+ * their closing quote, and a template's `${...}` recurses.
+ * @param {string} text - bundle source
+ * @param {string} signature - e.g. `function HeroShell(`
+ * @returns {string | null} the function's own source text
+ */
+function sliceFunctionSource(text, signature) {
+  const start = text.indexOf(signature)
+  if (start < 0) return null
+  const openParen = text.indexOf('(', start)
+  if (openParen < 0) return null
+  let depth = 0
+  let i = openParen
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '"' || ch === "'" || ch === '`') {
+      i = skipQuoted(text, i)
+      if (i < 0) return null
+      continue
+    }
+    if (ch === '(') depth += 1
+    else if (ch === ')') {
+      depth -= 1
+      if (depth === 0) break
+    }
+    i += 1
+  }
+  const bodyOpen = text.indexOf('{', i)
+  if (bodyOpen < 0) return null
+  const bodyEnd = skipBraces(text, bodyOpen)
+  if (bodyEnd < 0) return null
+  return text.slice(start, bodyEnd)
+}
+
+/** @returns {number} index just past the closing quote, or -1 */
+function skipQuoted(text, i) {
+  const quote = text[i]
+  i += 1
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (quote === '`' && ch === '$' && text[i + 1] === '{') {
+      const end = skipBraces(text, i + 1)
+      if (end < 0) return -1
+      i = end
+      continue
+    }
+    if (ch === quote) return i + 1
+    i += 1
+  }
+  return -1
+}
+
+/** @returns {number} index just past the brace that closes `openIdx`, or -1 */
+function skipBraces(text, openIdx) {
+  let depth = 0
+  let i = openIdx
+  while (i < text.length) {
+    const ch = text[i]
+    if (ch === '"' || ch === "'" || ch === '`') {
+      i = skipQuoted(text, i)
+      if (i < 0) return -1
+      continue
+    }
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return i + 1
+    }
+    i += 1
+  }
+  return -1
+}
 
 const makeHeroShell = new Function(
   'react_jsx_runtime', 'HeroFish', 'HeroShell_module_css_default', 'renderSlot', 't', 'react',
@@ -260,7 +350,7 @@ if (serviceProblems.length > 0) {
 }
 
 console.log(`OK — ${bundlePath}`)
-console.log(`     factory "${FACTORY_NAME.split('"')[1]}" declares "${MARKER}" as ${JSON.stringify(declared)} — no SlotOwnershipError.`)
+console.log(`     factory "${FACTORY_LABEL}" declares "${MARKER}" as ${JSON.stringify(declared)} — no SlotOwnershipError.`)
 console.log(`     HeroShell renders "${MARKER}" with fallbackText + headlineClassName,`)
 console.log('     and keeps the locale headline as the slot fallback (stock harness unchanged).')
 console.log('     The installed slots service declares the seat and accepts an occupant;')
